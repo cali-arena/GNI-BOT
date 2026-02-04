@@ -1,0 +1,79 @@
+"""
+Collector entrypoint: runs RSS + Telegram ingest on a configurable interval.
+Unified with worker: collector ingests (writes items to DB), worker processes (scoring → LLM → publish).
+Exits cleanly on SIGTERM.
+CLI: python -m apps.collector
+"""
+import os
+import signal
+import sys
+import time
+from pathlib import Path
+
+# Ensure repo root on path when run as __main__
+_repo = Path(__file__).resolve().parent.parent.parent
+if str(_repo) not in sys.path:
+    sys.path.insert(0, str(_repo))
+
+from apps.api.db import init_db
+from apps.collector.rss import run as run_rss_ingest
+from apps.collector.telegram_ingest import run as run_telegram_ingest
+from apps.shared.config import validate_config
+
+COLLECTOR_INTERVAL_MINUTES = int(
+    os.environ.get("COLLECTOR_INTERVAL_MINUTES")
+    or os.environ.get("COLLECTOR_INTERVAL", "15")
+)
+INGEST_LIMIT = int(os.environ.get("INGEST_LIMIT", "50"))
+TELEGRAM_SINCE_MINUTES = int(os.environ.get("TELEGRAM_SINCE_MINUTES", "60"))
+
+_shutdown = False
+
+
+def _handle_sigterm(signum, frame):
+    global _shutdown
+    _shutdown = True
+
+
+def run_once() -> tuple[int, int]:
+    """Run RSS + Telegram ingest once. Returns (rss_count, telegram_count)."""
+    init_db()
+    rss_n = run_rss_ingest(limit=INGEST_LIMIT)
+    tg_n = run_telegram_ingest(since_minutes=TELEGRAM_SINCE_MINUTES)
+    return (rss_n, tg_n)
+
+
+def main() -> None:
+    global _shutdown
+    validate_config(required=True)
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+    signal.signal(signal.SIGINT, _handle_sigterm)
+
+    interval_sec = max(1, COLLECTOR_INTERVAL_MINUTES * 60)
+    print(f"Collector started: interval={COLLECTOR_INTERVAL_MINUTES}m, limit={INGEST_LIMIT}, telegram_since={TELEGRAM_SINCE_MINUTES}m")
+
+    while not _shutdown:
+        try:
+            rss_n, tg_n = run_once()
+            total = rss_n + tg_n
+            if total > 0:
+                try:
+                    from apps.observability.metrics import record_items_ingested
+                    record_items_ingested(total)
+                except ImportError:
+                    pass
+            print(f"Collector ingest: rss={rss_n} telegram={tg_n} total={total}")
+        except Exception as e:
+            print(f"Collector error: {e}", file=sys.stderr)
+
+        # Sleep in small chunks to allow quick shutdown on SIGTERM
+        for _ in range(interval_sec):
+            if _shutdown:
+                break
+            time.sleep(1)
+
+    print("Collector shutdown")
+
+
+if __name__ == "__main__":
+    main()

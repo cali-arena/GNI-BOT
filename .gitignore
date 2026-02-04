@@ -1,0 +1,39 @@
+# Secrets and local config — never commit
+.env
+.env.local
+*.local
+
+# Data and auth (mounted on VM)
+data/wa-auth/
+data/telethon/
+backups/
+*.session
+*.session-journal
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+*.egg-info/
+.eggs/
+
+# Node (whatsapp-bot if present)
+node_modules/
+
+# IDE and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Test and build
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/

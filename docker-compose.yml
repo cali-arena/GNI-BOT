@@ -1,0 +1,243 @@
+# gni-bot-creator — production VM deployment (hardened)
+# Usage: docker compose up -d (from this directory; whatsapp-bot from ../apps/whatsapp-bot)
+# VM deploy path: /opt/gni-bot-creator (set in .env)
+# Ports: only API exposed (8000 or 80/443 behind reverse proxy). Postgres, Redis, Ollama, whatsapp-bot are NOT exposed.
+# Optional QR UI: docker compose --profile qr-ui up -d to expose Streamlit on 8501.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gni}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gni}
+      POSTGRES_DB: ${POSTGRES_DB:-gni}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    # No ports: internal only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gni} -d ${POSTGRES_DB:-gni}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    networks:
+      - internal
+    # No ports: internal only
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama
+    volumes:
+      - ollama_models:/root/.ollama
+    networks:
+      - internal
+    # No ports: internal only
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    ports:
+      - "0.0.0.0:${API_PORT:-8000}:8000"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-gni}:${POSTGRES_PASSWORD:-gni}@postgres:5432/${POSTGRES_DB:-gni}
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  collector:
+    build:
+      context: .
+      dockerfile: apps/collector/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-gni}:${POSTGRES_PASSWORD:-gni}@postgres:5432/${POSTGRES_DB:-gni}
+      COLLECTOR_INTERVAL_MINUTES: ${COLLECTOR_INTERVAL_MINUTES:-${COLLECTOR_INTERVAL:-15}}
+      INGEST_LIMIT: ${INGEST_LIMIT:-50}
+      TELEGRAM_SINCE_MINUTES: ${TELEGRAM_SINCE_MINUTES:-60}
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
+      TELETHON_SESSION_PATH: ${TELETHON_SESSION_PATH:-/data/telethon/session}
+      RSS_SOURCES_PATH: ${RSS_SOURCES_PATH:-}
+      DATA_SOURCES_PATH: ${DATA_SOURCES_PATH:-}
+    env_file: .env
+    volumes:
+      - ./data/telethon:/data/telethon
+      - ./data:/app/data:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-gni}:${POSTGRES_PASSWORD:-gni}@postgres:5432/${POSTGRES_DB:-gni}
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
+      OLLAMA_PULL_ON_START: ${OLLAMA_PULL_ON_START:-true}
+      OLLAMA_MODE: ${OLLAMA_MODE:-native}
+      RQ_QUEUE: ${RQ_QUEUE:-default}
+      RUN_EVERY_MINUTES: ${RUN_EVERY_MINUTES:-15}
+      DRY_RUN: ${DRY_RUN:-1}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_TARGET_CHAT_ID: ${TELEGRAM_TARGET_CHAT_ID:-${TELEGRAM_CHAT_ID:-}}
+      WHATSAPP_BOT_BASE_URL: ${WHATSAPP_BOT_BASE_URL:-http://whatsapp-bot:3100}
+      MAKE_WEBHOOK_URL: ${MAKE_WEBHOOK_URL:-}
+    env_file: .env
+    volumes:
+      - ./data/telethon:/data/telethon
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import redis; redis.Redis.from_url('redis://redis:6379/0').ping()\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # Optional: enable with --profile whatsapp. Build context must be ../apps/whatsapp-bot (e.g. clone to /opt/apps/whatsapp-bot).
+  whatsapp-bot:
+    build:
+      context: ../apps/whatsapp-bot
+      dockerfile: Dockerfile
+    environment:
+      PORT: 3100
+      AUTH_FOLDER: /data/wa-auth
+      REDIS_URL: redis://redis:6379/0
+    env_file: .env
+    volumes:
+      - ./data/wa-auth:/data/wa-auth
+    networks:
+      - internal
+    # No ports: internal only (API proxies /admin/wa/* via QR bridge)
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:3100/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    profiles:
+      - whatsapp
+
+  # Optional: Streamlit QR UI (expose 8501 only when profile qr-ui is used: docker compose --profile qr-ui up -d)
+  wa-qr-ui:
+    build:
+      context: apps/wa-qr-cloud-ui
+      dockerfile: Dockerfile
+    # Port 8501 exposed only when this service is started via --profile qr-ui
+    ports:
+      - "0.0.0.0:8501:8501"
+    env_file: .env
+    environment:
+      GNI_API_BASE_URL: http://api:8000
+      WA_QR_BRIDGE_TOKEN: ${WA_QR_BRIDGE_TOKEN:-}
+      UI_PASSWORD: ${UI_PASSWORD:-}
+      AUTO_REFRESH_SECONDS: ${AUTO_REFRESH_SECONDS:-3}
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - internal
+    profiles:
+      - qr-ui
+    restart: unless-stopped
+
+  # Optional: enable with --profile monitoring. Scrapes API /metrics every 30s.
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+    ports:
+      - "0.0.0.0:9090:9090"
+    networks:
+      - internal
+    depends_on:
+      - api
+    profiles:
+      - monitoring
+    restart: unless-stopped
+
+  backup:
+    image: postgres:16-alpine
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-gni}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-gni}
+      PGDATABASE: ${POSTGRES_DB:-gni}
+      BACKUP_RETENTION: ${BACKUP_RETENTION:-7}
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    entrypoint: ["/bin/sh", "/scripts/backup_postgres.sh"]
+    profiles:
+      - backup
+
+volumes:
+  postgres_data:
+  prometheus_data:
+  redis_data:
+  ollama_models:
+
+networks:
+  internal:
+    driver: bridge
