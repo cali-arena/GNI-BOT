@@ -2,6 +2,14 @@
 Streamlit app: Login + WhatsApp Connect only. Talks ONLY to FastAPI backend.
 No mandatory secrets; never block startup. Optional API URL from env or paste in UI.
 """
+import sys
+from pathlib import Path
+
+# Ensure app root is on path so "src" resolves (Streamlit Cloud may run with different cwd)
+_app_root = Path(__file__).resolve().parent
+if str(_app_root) not in sys.path:
+    sys.path.insert(0, str(_app_root))
+
 import streamlit as st
 
 from src.config import API_BASE_URL
