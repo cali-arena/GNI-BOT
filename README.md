@@ -502,3 +502,25 @@ Copy from `.env.example`. Compose provides defaults for Postgres and Redis so `u
 | `MAKE_API_KEY` | Publisher | Make API key |
 | `DATA_SOURCES_PATH` | Shared | Override path to sources YAML |
 | `DATA_KEYWORDS_PATH` | Shared | Override path to keywords YAML |
+
+## Troubleshooting
+
+### ModuleNotFoundError: No module named 'apps.api'
+
+This happens when Python cannot resolve the `apps` package (e.g. inside the API or worker container). The fix is in place if you use the repo’s Docker setup:
+
+1. **Root cause:** The container’s working directory must be the repo root (`/app`), and `PYTHONPATH` must be set to `/app` so that `import apps.api` resolves to `/app/apps/api`.
+
+2. **What we do:**
+   - **API Dockerfile:** Copies the full `apps/` tree into `/app/apps/`, sets `ENV PYTHONPATH=/app`, and runs `uvicorn apps.api.main:app` (so the app is loaded as a package).
+   - **Worker Dockerfile:** Copies the repo with `COPY . .` and sets `ENV PYTHONPATH=/app`.
+   - **docker-compose:** Both `api` and `worker` services have `environment: PYTHONPATH: /app` (and `env_file: .env` is unchanged).
+
+3. **Verify:** From repo root:
+   ```bash
+   docker compose build api worker
+   docker compose up -d
+   docker compose exec api python -c "import apps.api.core.settings; print('OK')"
+   docker compose exec worker python -c "import apps.worker.tasks; print('OK')"
+   ```
+   Or run `./scripts/test_imports.sh all` to test both.

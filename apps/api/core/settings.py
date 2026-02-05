@@ -10,8 +10,11 @@ from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from apps.shared.config import DATABASE_URL_DEFAULT, REDIS_URL_DEFAULT
-from apps.shared.env_helpers import parse_int_default
 from apps.shared.secrets import get_secret
+
+JWT_EXPIRY_MIN = 1
+JWT_EXPIRY_MAX = 604800  # 7 days
+JWT_EXPIRY_DEFAULT = 86400  # 24h
 
 
 def _get(key: str, default: str = "") -> str:
@@ -20,40 +23,43 @@ def _get(key: str, default: str = "") -> str:
 
 
 class ApiSettings(BaseSettings):
-    """API configuration from env. Empty values fall back to defaults."""
+    """API configuration from env. Empty values fall back to defaults; invalid int raises."""
 
     model_config = SettingsConfigDict(extra="ignore")
 
     DATABASE_URL: str = DATABASE_URL_DEFAULT
     REDIS_URL: str = REDIS_URL_DEFAULT
     JWT_SECRET: str = ""
-    JWT_EXPIRY_SECONDS: int = 86400  # 24h
+    JWT_EXPIRY_SECONDS: int = JWT_EXPIRY_DEFAULT
     API_KEY: str = ""
 
     @field_validator("JWT_EXPIRY_SECONDS", mode="before")
     @classmethod
     def _coerce_jwt_expiry(cls, v: object) -> int:
         if v is None:
-            return 86400
+            return JWT_EXPIRY_DEFAULT
         if isinstance(v, int):
-            return max(1, min(v, 604800)) if v else 86400
+            return max(JWT_EXPIRY_MIN, min(v, JWT_EXPIRY_MAX)) if v else JWT_EXPIRY_DEFAULT
         s = (v or "").strip()
         if not s:
-            return 86400
+            return JWT_EXPIRY_DEFAULT
         try:
             n = int(s)
-            return max(1, min(n, 604800)) if n else 86400
+            return max(JWT_EXPIRY_MIN, min(n, JWT_EXPIRY_MAX)) if n else JWT_EXPIRY_DEFAULT
         except ValueError:
-            return 86400
+            raise ValueError(
+                "JWT_EXPIRY_SECONDS must be an integer between 1 and 604800 (e.g. 86400 for 24h). "
+                "Fix or remove the env var to use default 86400."
+            )
 
     @classmethod
     def from_env(cls) -> "ApiSettings":
-        """Build from current env (get_secret for compatibility with secrets provider)."""
+        """Build from current env. Empty JWT_EXPIRY_SECONDS -> default; non-numeric -> clear error."""
         return cls(
             DATABASE_URL=_get("DATABASE_URL", DATABASE_URL_DEFAULT),
             REDIS_URL=_get("REDIS_URL", REDIS_URL_DEFAULT),
             JWT_SECRET=_get("JWT_SECRET"),
-            JWT_EXPIRY_SECONDS=parse_int_default(_get("JWT_EXPIRY_SECONDS", "86400"), 86400, 1, 604800),
+            JWT_EXPIRY_SECONDS=_get("JWT_EXPIRY_SECONDS", "86400"),  # validator: empty->default, invalid->raise
             API_KEY=_get("API_KEY") or _get("ADMIN_API_KEY"),
         )
 

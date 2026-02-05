@@ -68,28 +68,27 @@ class TestParseIntDefault:
 
 @pytest.mark.skipif(not HAS_PYDANTIC_SETTINGS, reason="pydantic-settings not installed")
 class TestApiSettingsJwtExpiry:
-    """ApiSettings.JWT_EXPIRY_SECONDS: empty/invalid -> 86400, valid -> int."""
+    """ApiSettings.JWT_EXPIRY_SECONDS: empty -> 86400, invalid -> raise, valid -> int."""
 
     def test_empty_string_becomes_default(self):
-        # from_env uses get_secret; empty env value already yields default in get_secret
         s = ApiSettings(
             DATABASE_URL="postgresql://u:p@h/d",
             REDIS_URL="redis://localhost/0",
             JWT_SECRET="",
-            JWT_EXPIRY_SECONDS="",  # validator receives "" -> 86400
+            JWT_EXPIRY_SECONDS="",  # validator: empty -> 86400
             API_KEY="",
         )
         assert s.JWT_EXPIRY_SECONDS == 86400
 
-    def test_invalid_string_becomes_default(self):
-        s = ApiSettings(
-            DATABASE_URL="postgresql://u:p@h/d",
-            REDIS_URL="redis://localhost/0",
-            JWT_SECRET="",
-            JWT_EXPIRY_SECONDS="notanint",
-            API_KEY="",
-        )
-        assert s.JWT_EXPIRY_SECONDS == 86400
+    def test_invalid_string_raises(self):
+        with pytest.raises(ValueError, match="JWT_EXPIRY_SECONDS must be an integer"):
+            ApiSettings(
+                DATABASE_URL="postgresql://u:p@h/d",
+                REDIS_URL="redis://localhost/0",
+                JWT_SECRET="",
+                JWT_EXPIRY_SECONDS="notanint",
+                API_KEY="",
+            )
 
     def test_valid_int_parsed(self):
         s = ApiSettings(
