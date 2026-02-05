@@ -1,44 +1,23 @@
-# WhatsApp QR Cloud UI
+# WhatsApp Connect — Login + QR
 
-Lightweight Streamlit app for connecting WhatsApp via QR. Talks only to the GNI API (JWT); no WA tokens stored.
+Streamlit app: **Login** and **WhatsApp Connect** (QR + status). Talks only to your FastAPI backend.
 
-## Deploy structure
+- **No mandatory secrets.** App boots immediately. Optional env `GNI_API_BASE_URL` or paste backend URL in the UI.
+- Login: email/password → `POST {backend}/auth/login` → JWT in session.
+- WhatsApp Connect: connect, poll status/QR via backend; QR rendered with qrcode+PIL.
 
-```
-apps/wa-qr-cloud-ui/
-  app.py              # Entrypoint
-  requirements.txt
-  README.md
-  pages/              # Multi-page app
-  src/                # config, api, auth
-```
+## Streamlit Cloud
 
-## Streamlit Cloud deployment
-
-1. **Connect** your GitHub repo (e.g. `your-org/GNI-BOT`).
-2. **App entrypoint**
-   - **Root directory:** `apps/wa-qr-cloud-ui`
-   - **Main file path:** `app.py`
-3. **Environment / Secrets**
-   - **Required:** `GNI_API_BASE_URL` — API base URL (e.g. `https://your-api.example.com:8000`), no trailing slash.
-   - **Optional:** `APP_NAME` — App title in the browser (defaults to GNI).
-4. **Save** and **Reboot** the app.
-
-Users log in with email/password (API `/auth/login`); JWT is stored in session. They see only their own WhatsApp QR and status.
+- **App path (entrypoint):** `apps/wa-qr-cloud-ui/app.py` (from repo root).
+- **In Streamlit Cloud:** set **Root directory** to `apps/wa-qr-cloud-ui`, **Main file** to `app.py`.
+- **Secrets:** None required. Optional env `GNI_API_BASE_URL`. If empty, user pastes backend URL on first load.
 
 ## Run locally
 
 ```bash
 cd apps/wa-qr-cloud-ui
 pip install -r requirements.txt
-# Set GNI_API_BASE_URL in .streamlit/secrets.toml or env
 streamlit run app.py
 ```
 
-## Syntax check
-
-From this directory or repo root:
-
-```bash
-python -m py_compile app.py
-```
+Set `GNI_API_BASE_URL` or paste the backend URL in the app when prompted.
