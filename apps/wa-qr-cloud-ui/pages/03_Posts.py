@@ -4,12 +4,14 @@ Posts — generated posts queue. Login required. Client = own; admin = all. Appr
 import streamlit as st
 
 from src.auth import require_login
-from src.config import validate_config
 from src.api import get_posts, post_approve, post_reject
+from src.ui import inject_app_css, render_sidebar
 
-validate_config()
 require_login()
+inject_app_css()
 role = (st.session_state.get("auth_role") or "client").strip().lower()
+base = (st.session_state.get("api_base_url") or "").strip().rstrip("/")
+render_sidebar(role, "posts", api_base_url=base, user_email=st.session_state.get("auth_email") or "")
 tenant = None if role == "admin" else (st.session_state.get("auth_email") or "").strip() or None
 
 def _emoji(s):

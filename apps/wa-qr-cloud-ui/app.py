@@ -1,167 +1,110 @@
 """
-Streamlit UI: 1) Login (email + password, JWT in session). 2) WhatsApp Connect (status, QR, auto-refresh).
-No backend config in UI. No debug or tracebacks. All errors → short user-friendly message.
+Home — GNI Streamlit app. Login via API (POST /auth/login), then WhatsApp / Monitoring / Posts.
+No required secrets; optional GNI_API_BASE_URL or paste Backend URL in UI.
 """
-import io
-import time
 import streamlit as st
 
-from src.api_base import get_api_base_url
-from src.http import get as http_get, post as http_post
+from src.config import get_config, has_seed_for_legacy
+from src.auth import seed_user_if_needed, login as legacy_login, logout, require_login
+from src.api import get_health, post_auth_login, get_auth_me
+from src.ui import inject_app_css, render_sidebar
 
-st.set_page_config(page_title="WhatsApp Connect", layout="centered", initial_sidebar_state="expanded")
+st.set_page_config(page_title="GNI — Home", layout="centered", initial_sidebar_state="expanded")
+inject_app_css()
 
-for key in ("token", "logged_in", "email"):
+# --- 1) Session state: backend URL (env/secrets or user-pasted), auth ---
+for key in ("api_base_url", "auth_user", "auth_role", "auth_email", "auth_token"):
     if key not in st.session_state:
         st.session_state[key] = None
+if not st.session_state.api_base_url and get_config().get("GNI_API_BASE_URL"):
+    st.session_state.api_base_url = get_config().get("GNI_API_BASE_URL", "").strip().rstrip("/")
+if has_seed_for_legacy():
+    seed_user_if_needed()
 
-base = get_api_base_url().rstrip("/")
-
-
-def _headers(token: str):
-    h = {"Content-Type": "application/json"}
-    if token:
-        h["Authorization"] = f"Bearer {token}"
-    return h
-
-
-def _sanitize_disconnect_reason(reason: str) -> str:
-    """Generic text only; no URLs or technical details."""
-    if not reason or not isinstance(reason, str):
-        return "Connection was closed."
-    s = reason.strip()
-    if "http" in s.lower() or "://" in s or "localhost" in s.lower():
-        return "Connection was closed."
-    return s[:200] if len(s) > 200 else s
-
-
-def logout():
-    st.session_state.token = None
-    st.session_state.logged_in = False
-    st.session_state.email = None
-    st.rerun()
-
-
-# --- Page 1: Login ---
-if not st.session_state.get("logged_in") or not st.session_state.get("token"):
-    st.title("WhatsApp Connect")
-    st.subheader("Log in")
-    with st.form("login_form"):
-        email = st.text_input("Email", key="login_email", autocomplete="email")
-        password = st.text_input("Password", type="password", key="login_password", autocomplete="current-password")
-        if st.form_submit_button("Login"):
-            e = (email or "").strip()
-            p = (password or "")
-            if not e or not p:
-                st.error("Email and password required.")
+# --- 2) Backend URL not set: show paste input (card-style form) ---
+base = (st.session_state.get("api_base_url") or "").strip().rstrip("/")
+if not base:
+    st.title("GNI")
+    st.markdown('<p class="subtitle-muted">Set your backend API URL below (or set <strong>GNI_API_BASE_URL</strong> in Streamlit Cloud Secrets).</p>', unsafe_allow_html=True)
+    with st.form("backend_url_form"):
+        url_input = st.text_input("Backend URL", placeholder="https://your-api.example.com:8000", key="url_input")
+        st.caption("Example: https://api.yourdomain.com or https://YOUR_IP:8000 — no trailing slash.")
+        if st.form_submit_button("Save"):
+            u = (url_input or "").strip().rstrip("/")
+            if u:
+                st.session_state.api_base_url = u
+                st.rerun()
             else:
-                data, err, code = http_post(f"{base}/auth/login", {"email": e, "password": p}, headers=_headers(""))
-                if code == 401:
-                    st.error("Invalid email or password.")
-                elif err:
-                    st.error(err)
-                elif data and isinstance(data, dict) and data.get("access_token"):
-                    st.session_state.token = data["access_token"]
-                    st.session_state.logged_in = True
-                    st.session_state.email = e
-                    st.rerun()
-                else:
-                    st.error("Something went wrong. Please try again later.")
+                st.warning("Enter a URL.")
     st.stop()
 
-# --- Page 2: WhatsApp Connect ---
-token = (st.session_state.get("token") or "").strip()
+# --- 3) Login gate: card-style form + helper text; then Status placeholder ---
+if not st.session_state.get("auth_token") and not st.session_state.get("auth_email"):
+    st.title("GNI")
+    st.markdown('<p class="subtitle-muted">Sign in with your email and password to continue.</p>', unsafe_allow_html=True)
+    with st.form("login_form"):
+        email = st.text_input("Email", key="login_email", autocomplete="email")
+        st.caption("Use the same email you registered with on the backend.")
+        password = st.text_input("Password", type="password", key="login_password", autocomplete="current-password")
+        st.caption("Your password is never stored in this app.")
+        submitted = st.form_submit_button("Log in")
+        if submitted:
+            email = (email or "").strip()
+            password = password or ""
+            if not email or not password:
+                st.error("Email and password required.")
+            else:
+                body, err = post_auth_login(email, password)
+                if err:
+                    if has_seed_for_legacy() and legacy_login(email, password):
+                        st.rerun()
+                    else:
+                        st.error(err or "Invalid email or password.")
+                else:
+                    token = (body or {}).get("access_token") if isinstance(body, dict) else None
+                    if token:
+                        st.session_state.auth_token = token
+                        me, me_err = get_auth_me()
+                        if not me_err and isinstance(me, dict):
+                            st.session_state.auth_email = me.get("email") or email
+                            st.session_state.auth_role = "client"
+                        else:
+                            st.session_state.auth_email = email
+                        st.rerun()
+                    else:
+                        st.error("Login failed.")
+    st.caption("Backend: %s" % base)
+    st.stop()
 
-# Sidebar: no backend config, logout
-st.sidebar.title("WhatsApp Connect")
-st.sidebar.caption("Logged in as **%s**" % (st.session_state.get("email") or ""))
-if st.sidebar.button("Log out"):
-    logout()
+# --- 4) Sidebar: GNI, nav with icons, current-page hint ---
+role = (st.session_state.get("auth_role") or "client").strip().lower()
+render_sidebar(role, "home", api_base_url=base, user_email=st.session_state.auth_email or "")
 
-status_data, status_err, status_code = http_get(f"{base}/whatsapp/status", headers=_headers(token))
-qr_data, qr_err, qr_code = http_get(f"{base}/whatsapp/qr", headers=_headers(token))
+# --- 5) Main: header, Status placeholder card, API health, quick links ---
+st.title("Home")
+st.markdown('<p class="subtitle-muted">Dashboard and quick links.</p>', unsafe_allow_html=True)
+st.success("Logged in.")
 
-if status_code == 401 or qr_code == 401:
-    logout()
+# Status placeholder card (UI-only; no backend logic)
+st.markdown(
+    '<div class="status-card"><strong>Status</strong><br><span class="muted">Not connected yet. Go to WhatsApp Connect to link your account.</span></div>',
+    unsafe_allow_html=True,
+)
 
-connected = False
-qr_string = None
-last_reason = None
-if isinstance(status_data, dict):
-    connected = status_data.get("connected") is True
-    s = (status_data.get("status") or "").strip().lower()
-    if not connected and s == "connected":
-        connected = True
-    raw_reason = status_data.get("lastDisconnectReason")
-    if raw_reason:
-        last_reason = _sanitize_disconnect_reason(str(raw_reason))
-if isinstance(qr_data, dict) and qr_data.get("qr"):
-    qr_string = qr_data.get("qr")
-
-st.title("WhatsApp Connect")
-
-# Status badge
-if connected:
-    st.success("Connected")
-elif qr_string:
-    st.info("Waiting for QR")
+# API health
+health_data, health_err = get_health()
+if health_err:
+    st.warning(f"⚠️ API health: {health_err}")
 else:
-    st.info("Disconnected")
+    status = health_data.get("status", "ok") if isinstance(health_data, dict) else "ok"
+    st.success(f"✅ API health: **{status}**")
 
-if last_reason:
-    st.caption(last_reason)
-
-# WhatsApp log (same locally and on Cloud)
-with st.expander("WhatsApp log", expanded=False):
-    status_label = "Connected" if connected else ("Waiting for QR" if qr_string else "Disconnected")
-    st.text("Status: %s" % status_label)
-    if connected and isinstance(status_data, dict) and (status_data.get("phone") or status_data.get("phone_e164")):
-        st.text("Phone: %s" % (status_data.get("phone") or status_data.get("phone_e164") or ""))
-    if last_reason:
-        st.text("Last disconnect: %s" % last_reason)
-    if status_err or qr_err:
-        st.text("Note: %s" % (status_err or qr_err))
-
-if status_code == 429 or qr_code == 429:
-    st.warning("Too many attempts. Please try again later.")
-elif status_err or qr_err:
-    st.warning(status_err or qr_err)
-
-if st.button("Connect WhatsApp", key="wa_connect"):
-    with st.spinner("Starting…"):
-        _, err, code = http_post(f"{base}/whatsapp/connect", {}, headers=_headers(token))
-        if code == 401:
-            logout()
-        if code == 429:
-            st.warning("Too many attempts. Please try again later.")
-        elif err:
-            st.error(err)
-        else:
-            st.success("Session started.")
-            st.rerun()
-
-if st.button("Refresh now", key="wa_refresh"):
-    st.rerun()
-
-st.divider()
-st.markdown("**How to connect:** Open WhatsApp → Linked Devices → Link a device → scan QR")
-
-if connected:
-    st.caption("Session active. QR hidden.")
-elif qr_string:
-    try:
-        import qrcode
-        img = qrcode.make(qr_string)
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        buf.seek(0)
-        st.image(buf, caption="Scan with WhatsApp", use_container_width=False)
-    except Exception:
-        st.caption("QR could not be rendered.")
-else:
-    st.caption("Waiting for QR…")
-
-# Auto-refresh every 3 seconds when not connected
-if not connected and status_code != 401 and qr_code != 401:
-    time.sleep(3)
-    st.rerun()
+# Quick links
+st.subheader("Quick links")
+cols = st.columns(3)
+with cols[0]:
+    st.page_link("pages/01_WhatsApp_Connect.py", label="WhatsApp Connect", icon="📱")
+with cols[1]:
+    st.page_link("pages/02_Monitoring.py", label="Monitoring", icon="📊")
+with cols[2]:
+    st.page_link("pages/03_Posts.py", label="Posts", icon="📝")

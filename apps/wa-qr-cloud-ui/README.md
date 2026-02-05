@@ -1,61 +1,54 @@
-# WhatsApp Connect — Streamlit Cloud UI
+# GNI — Streamlit Cloud UI
 
-Login and WhatsApp Connect (QR + status). Talks to your FastAPI backend. **No secrets required** for deployment.
+Multi-page Streamlit app: **Home**, **WhatsApp Connect**, **Monitoring**, **Posts**. Login via API (JWT); only **GNI_API_BASE_URL** is required in Secrets.
 
-## No secrets required
+## Streamlit Cloud Setup
 
-The app uses a **default API URL** in code. You can run it on Streamlit Cloud with **zero secrets** configured. No `GNI_API_BASE_URL` or `.streamlit/secrets.toml` needed.
+1. Deploy from this repo. Set **Root directory** to this folder (e.g. `apps/wa-qr-cloud-ui`). **Main file path:** `app.py`.
 
-**Optional override (for a different backend):**
+2. In **Settings → Secrets**, set **only**:
 
-- **Streamlit Cloud:** Settings → Environment variables → `GNI_API_BASE_URL` = `http://your-host:8000`
-- **Or** Settings → Secrets → `GNI_API_BASE_URL` = `http://your-host:8000`
-
-If the backend is temporarily down, the app still loads and shows a generic message (“Something went wrong. Please try again later.”). No stack traces or hostnames are shown to users.
-
-## Run locally
-
-**From repo root (same as Streamlit Cloud):**
-
-```bash
-pip install -r requirements-streamlit.txt
-streamlit run streamlit_app.py
+```toml
+GNI_API_BASE_URL = "https://your-api.example.com"
 ```
 
-**From this folder:**
+(No trailing slash. Use your VM API URL.)
+
+3. **Save** and **Reboot**. Users log in with their API account (email/password); JWT in session; they see only their own WhatsApp QR/status.
+
+**Optional:** `SEED_CLIENT_EMAIL` / `SEED_CLIENT_PASSWORD` (legacy fallback), `SEED_CLIENT_ROLE`, `API_KEY`, `AUTO_REFRESH_SECONDS`. Do **not** set `WA_QR_BRIDGE_TOKEN`; auth is JWT-only.
+
+## Troubleshooting
+
+- **"Missing configuration"** — Set **GNI_API_BASE_URL** in **Settings → Secrets**. Save and refresh.
+
+- **Health check failure**  
+  The app calls `GET {GNI_API_BASE_URL}/health`. If you see "API health: …" with an error: (1) Check `GNI_API_BASE_URL` is correct and reachable from Streamlit Cloud. (2) Ensure the API is up and `/health` returns 200. (3) If the API uses auth for `/health`, it must allow unauthenticated access for this check or you’ll see a 401.
+
+- **Invalid email or password** — Log in with an account that exists in the API (e.g. `/auth/register` or your seed script).
+
+- **Monitoring / Posts return 401 or 404**  
+  If your backend expects `X-API-Key`, set `API_KEY` in Secrets. Endpoints: `/monitoring/status`, `/monitoring/recent`, `POST /monitoring/run`, `/review/pending`, `POST /review/{id}/approve`, `POST /review/{id}/reject`.
+
+## Run locally
 
 ```bash
 cd apps/wa-qr-cloud-ui
 pip install -r requirements.txt
+# Create .streamlit/secrets.toml with the keys above (or export env vars)
 streamlit run app.py
 ```
 
-## Streamlit Cloud deployment
+## Security
 
-### Entrypoint and requirements
+- **Secrets:** Stored only in Streamlit Secrets or env; never in code or logs.
+- **Passwords:** Hashed with bcrypt (passlib); never stored in plaintext.
+- **Auth:** Session-only (`st.session_state`); no local file persistence (Cloud disk is ephemeral).
+- **QR data:** Never printed or logged.
 
-- **Main file path:** `streamlit_app.py` (repo root)
-- **Requirements file:** `requirements-streamlit.txt` (repo root)
-- **Root directory:** leave empty (repo root)
+## Pages
 
-### Redeploy after code changes
-
-1. Commit and push to the branch your app uses (e.g. `main`):
-   ```bash
-   git add .
-   git commit -m "Streamlit: your message"
-   git push origin main
-   ```
-2. Streamlit Cloud **auto-deploys on push**. Wait 1–2 minutes.
-3. Optional: open the app on share.streamlit.io → **Manage app** → **Reboot app** to force an immediate redeploy.
-
-No need to add or change secrets when redeploying.
-
-## Dependencies (requirements.txt)
-
-- streamlit
-- requests
-- qrcode[pil]
-- pillow
-
-All are listed in `apps/wa-qr-cloud-ui/requirements.txt` and in the root `requirements-streamlit.txt`.
+- **Home** — Config OK, API health, quick links. Login required.
+- **WhatsApp Connect** — Client role only. Step-by-step QR flow; status chips 🟢🟡🔴; Refresh QR (rate-limited 10s).
+- **Monitoring** — Scraping/jobs; client sees own data, admin sees all; "Run now ▶️" with confirmation.
+- **Posts** — Pending/Published tabs; Approve ✅ / Reject ❌; same client/admin visibility.

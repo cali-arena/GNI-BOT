@@ -2,13 +2,16 @@
 Monitoring — scraping/jobs. Login required. Client = own data; admin = all.
 """
 import streamlit as st
-from src.auth import require_login
-from src.config import validate_config
-from src.api import get_health, get_monitoring_status, get_monitoring_recent, post_monitoring_run
 
-validate_config()
+from src.auth import require_login
+from src.api import get_health, get_monitoring_status, get_monitoring_recent, post_monitoring_run
+from src.ui import inject_app_css, render_sidebar
+
 require_login()
+inject_app_css()
 role = (st.session_state.get("auth_role") or "client").strip().lower()
+base = (st.session_state.get("api_base_url") or "").strip().rstrip("/")
+render_sidebar(role, "monitoring", api_base_url=base, user_email=st.session_state.get("auth_email") or "")
 tenant = None if role == "admin" else (st.session_state.get("auth_email") or "").strip() or None
 
 st.title("Monitoring")
@@ -16,18 +19,18 @@ st.caption("Scraping and job status." + (" Showing all tenants." if role == "adm
 
 health_data, health_err = get_health()
 if health_err:
-    st.warning("API health: " + health_err)
+    st.warning(f"⚠️ API health: {health_err}")
 else:
     status = health_data.get("status", "ok") if isinstance(health_data, dict) else "ok"
-    st.success("API health: " + str(status))
+    st.success(f"✅ API health: **{status}**")
 
 status_data, status_err = get_monitoring_status(tenant=tenant)
 if status_err:
-    st.warning("Status: " + status_err)
+    st.warning(f"Status: {status_err}")
 elif status_data and isinstance(status_data, dict):
     st.subheader("Status")
     for k, v in status_data.items():
-        st.text("%s: %s" % (k, v))
+        st.text(f"{k}: {v}")
 
 st.subheader("Recent jobs")
 recent, recent_err = get_monitoring_recent(limit=20, tenant=tenant)
@@ -37,18 +40,18 @@ elif recent and len(recent) > 0:
     def _emoji(s):
         s = (s or "").lower()
         if s in ("ok", "success", "completed", "done"):
-            return "✅ " + str(s)
+            return "✅"
         if s in ("pending", "running", "in_progress"):
-            return "🟡 " + str(s)
-        return "🔴 " + str(s)
+            return "🟡"
+        return "🔴"
     rows = []
     for row in recent:
         if isinstance(row, dict):
             status = row.get("status") or row.get("state") or "—"
             ts = row.get("created_at") or row.get("updated_at") or row.get("timestamp") or "—"
-            rows.append({"Status": _emoji(str(status)), "ID": row.get("id", "—"), "Created": ts})
+            rows.append({"Status": _emoji(str(status)) + " " + str(status), "ID": row.get("id", "—"), "Created": ts})
         else:
-            rows.append({"Status": "-", "ID": str(row), "Created": "-"})
+            rows.append({"Status": "—", "ID": str(row), "Created": "—"})
     st.dataframe(rows, use_container_width=True, hide_index=True)
 else:
     st.info("No recent jobs.")
@@ -57,7 +60,7 @@ st.divider()
 st.subheader("Run scraping now")
 if "_confirm_run" not in st.session_state:
     st.session_state._confirm_run = False
-if st.button("Run now", key="monitoring_run"):
+if st.button("Run now ▶️", key="monitoring_run"):
     st.session_state._confirm_run = True
 if st.session_state._confirm_run:
     st.caption("Confirm run? This triggers a scraping job.")

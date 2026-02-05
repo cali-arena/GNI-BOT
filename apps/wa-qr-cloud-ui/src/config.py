@@ -1,15 +1,12 @@
 """
-Central config: st.secrets first, then os.environ. No plaintext secrets in code.
-Required for Cloud: GNI_API_BASE_URL only (login via POST /auth/login, JWT in session; no WA tokens).
-Optional: SEED_CLIENT_* for legacy in-app fallback; API_KEY for monitoring/posts.
+Config: optional API base URL from secrets/env. No required secrets; app never blocks.
+GNI_API_BASE_URL can be set in Streamlit Cloud Secrets or env; if empty, user pastes URL in UI (st.session_state).
 """
 import os
 from typing import Any
 
 import streamlit as st
 
-# Only API base URL required; Streamlit talks to API over HTTPS, uses JWT (no WA_QR_BRIDGE_TOKEN)
-REQUIRED_KEYS = ("GNI_API_BASE_URL",)
 OPTIONAL_KEYS = (
     "SEED_CLIENT_EMAIL",
     "SEED_CLIENT_PASSWORD",
@@ -34,9 +31,15 @@ def _get(key: str, default: str = "") -> str:
     return str(val).strip()
 
 
+def has_seed_for_legacy() -> bool:
+    """True if SEED_CLIENT_EMAIL and SEED_CLIENT_PASSWORD are set (legacy in-app login fallback)."""
+    c = get_config()
+    return bool((c.get("SEED_CLIENT_EMAIL") or "").strip() and (c.get("SEED_CLIENT_PASSWORD") or "").strip())
+
+
 def get_config() -> dict[str, Any]:
-    """Return full config dict. All keys from secrets/env."""
-    base_url = _get("GNI_API_BASE_URL").rstrip("/")
+    """Return full config dict. GNI_API_BASE_URL optional (empty OK)."""
+    base_url = _get("GNI_API_BASE_URL", "").rstrip("/")
     token = _get("WA_QR_BRIDGE_TOKEN")
     seed_email = _get("SEED_CLIENT_EMAIL")
     seed_password = _get("SEED_CLIENT_PASSWORD")
@@ -57,25 +60,6 @@ def get_config() -> dict[str, Any]:
     }
 
 
-def has_seed_for_legacy() -> bool:
-    """True if SEED_CLIENT_EMAIL and SEED_CLIENT_PASSWORD are set (legacy in-app login fallback)."""
-    c = get_config()
-    return bool((c.get("SEED_CLIENT_EMAIL") or "").strip() and (c.get("SEED_CLIENT_PASSWORD") or "").strip())
-
-
 def validate_config() -> None:
-    """
-    Validate required keys. On failure: friendly banner with ✅/⚠️ emojis and st.stop().
-    """
-    cfg = get_config()
-    missing = [k for k in REQUIRED_KEYS if not (cfg.get(k) or "").strip()]
-    if not missing:
-        return
-    st.error(
-        "⚠️ **Missing configuration**\n\n"
-        "Set these in **Streamlit Cloud → Settings → Secrets** (or env):\n\n"
-        + "\n".join(f"• **{k}**" for k in missing)
-        + "\n\n"
-        "✅ After saving secrets, refresh the app."
-    )
-    st.stop()
+    """No-op. No required config; app never blocks. User can paste Backend URL in UI."""
+    pass

@@ -1,34 +1,35 @@
-# Deploy WhatsApp QR UI to Streamlit Cloud
+# Deploy to Streamlit Cloud (fix "Missing configuration")
 
-This app talks **only** to the GNI API over HTTPS. Users log in with email/password (JWT); no WA tokens are stored in Streamlit.
+## 1. Push your code (if needed)
 
-## Required: GNI_API_BASE_URL
+If your app at **automatewa.streamlit.app** is connected to a repo that doesn’t have this folder yet:
 
-- **Repository:** Your GNI-BOT repo (e.g. `https://github.com/your-org/GNI-BOT`)
-- **Branch:** `main` (or your default)
-- **Root directory:** `apps/wa-qr-cloud-ui`
-- **Main file path:** `app.py`
+- Push this folder (`wa-qr-cloud-ui`) to that repo.
+- In Streamlit Cloud: **Settings → General → Root directory** = path to this app (e.g. `apps/wa-qr-cloud-ui`). **Main file path:** `app.py`.
+- Click **Reboot app** after saving.
 
-### Streamlit Cloud settings
+## 2. Add secrets (fix the red banner)
 
-1. [Streamlit Community Cloud](https://share.streamlit.io/) → your app → **Settings**.
-2. **General:** set **Root directory** to `apps/wa-qr-cloud-ui`, **Main file path** to `app.py`.
-3. **Secrets** (or Environment variables): set **only**:
+1. Open **[Streamlit Community Cloud](https://share.streamlit.io/)** and sign in.
+2. Open your app (**automatewa**).
+3. Go to **Settings → Secrets**.
+4. Paste the block below and **replace the placeholders** with your real values:
 
 ```toml
 GNI_API_BASE_URL = "https://your-api.example.com"
+WA_QR_BRIDGE_TOKEN = "your_long_random_bridge_token"
+SEED_CLIENT_EMAIL = "admin@yourcompany.com"
+SEED_CLIENT_PASSWORD = "your_secure_password"
+SEED_CLIENT_ROLE = "client"
 ```
 
-Use your VM's public URL and port (e.g. `https://api.yourdomain.com` or `https://YOUR_IP:8000`). No trailing slash. The API must be reachable from Streamlit Cloud over HTTPS.
+5. Click **Save**. The app will reload; the "Missing configuration" error should disappear.
+6. Log in with `SEED_CLIENT_EMAIL` and `SEED_CLIENT_PASSWORD`.
 
-4. **Save** and **Reboot** the app.
+## 3. Optional
 
-Users log in with their **API user** email/password (created via `/auth/register` or your seed script). JWT is kept in `session_state`; they see only their own QR and status.
+- **API key:** If your backend uses `X-API-Key` for Monitoring/Posts, add in Secrets:  
+  `API_KEY = "your-api-key"`
+- **Root directory:** If the repo root is not this app, set **Root directory** to e.g. `apps/wa-qr-cloud-ui`.
 
-## Optional
-
-- **SEED_CLIENT_EMAIL** / **SEED_CLIENT_PASSWORD**: legacy in-app fallback if API login fails (not required for normal JWT flow).
-- **API_KEY** or **ADMIN_API_KEY**: for Monitoring/Posts if your API uses `X-API-Key`.
-- **AUTO_REFRESH_SECONDS**: polling interval for QR/status (default 3).
-
-Do **not** set `WA_QR_BRIDGE_TOKEN` for this app; authentication is JWT-only.
+After saving secrets, always **refresh the app** or use **Reboot app** in Settings.

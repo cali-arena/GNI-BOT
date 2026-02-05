@@ -16,7 +16,10 @@ except ImportError:
         passlib_bcrypt = None
         _use_passlib = False
 
+
+# In-memory only (no disk). Seed user populated on startup.
 _users: dict[str, dict[str, Any]] = {}
+
 
 def _hash_password(plain: str) -> str:
     if _use_passlib and passlib_bcrypt:
@@ -24,6 +27,7 @@ def _hash_password(plain: str) -> str:
     if bcrypt:
         return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     raise RuntimeError("Install passlib[bcrypt] or bcrypt")
+
 
 def _verify_password(plain: str, hashed: str) -> bool:
     if not plain or not hashed:
@@ -37,7 +41,9 @@ def _verify_password(plain: str, hashed: str) -> bool:
         return False
     return False
 
+
 def seed_user_if_needed() -> None:
+    """Seed the single client user from config (secrets). Idempotent. In-memory only."""
     import streamlit as st
     from src.config import get_config
     cfg = get_config()
@@ -48,9 +54,15 @@ def seed_user_if_needed() -> None:
         return
     if email in _users:
         return
-    _users[email] = {"email": email, "password_hash": _hash_password(password), "role": role}
+    _users[email] = {
+        "email": email,
+        "password_hash": _hash_password(password),
+        "role": role,
+    }
+
 
 def login(email: str, password: str) -> bool:
+    """Verify credentials and set session. Returns True on success."""
     import streamlit as st
     email = (email or "").strip().lower()
     if not email or not password:
@@ -63,22 +75,26 @@ def login(email: str, password: str) -> bool:
     st.session_state.auth_email = user.get("email")
     return True
 
+
 def logout() -> None:
-    """Clear all auth session keys (JWT + legacy). No secrets printed."""
+    """Clear auth from session (legacy + JWT)."""
     import streamlit as st
-    for key in ("jwt", "logged_in", "email", "auth_user", "auth_role", "auth_email", "auth_token"):
+    for key in ("auth_user", "auth_role", "auth_email", "auth_token"):
         if key in st.session_state:
             del st.session_state[key]
 
+
 def require_login() -> None:
+    """Require logged-in user (auth_email or auth_token). st.stop() if not."""
     import streamlit as st
-    # Logged in if we have JWT (API login) or legacy session (seed user)
-    if st.session_state.get("auth_token") or st.session_state.get("auth_email"):
+    if st.session_state.get("auth_email") or st.session_state.get("auth_token"):
         return
     st.warning("Please log in to continue.")
     st.stop()
 
-def require_role(roles):
+
+def require_role(roles: list[str] | tuple[str]) -> None:
+    """Require current user role in allowed list. Call after require_login(). st.stop() if not."""
     import streamlit as st
     role = (st.session_state.get("auth_role") or "").strip().lower()
     allowed = [r.strip().lower() for r in roles]
@@ -86,8 +102,13 @@ def require_role(roles):
         st.error("🔒 You do not have permission to view this page.")
         st.stop()
 
-def current_user():
+
+def current_user() -> Optional[dict[str, Any]]:
+    """Return current user dict (email, role) or None."""
     import streamlit as st
     if not st.session_state.get("auth_email"):
         return None
-    return {"email": st.session_state.get("auth_email"), "role": (st.session_state.get("auth_role") or "client").strip().lower()}
+    return {
+        "email": st.session_state.get("auth_email"),
+        "role": (st.session_state.get("auth_role") or "client").strip().lower(),
+    }
