@@ -2,6 +2,8 @@
 Home — GNI Streamlit app. Login via API (POST /auth/login), then WhatsApp / Monitoring / Posts.
 No required secrets; optional GNI_API_BASE_URL or paste Backend URL in UI.
 """
+from pathlib import Path
+
 import streamlit as st
 
 from src.config import get_config, has_seed_for_legacy
@@ -24,8 +26,12 @@ if has_seed_for_legacy():
 # --- 2) Backend URL not set: show paste input (card-style form) ---
 base = (st.session_state.get("api_base_url") or "").strip().rstrip("/")
 if not base:
-    st.title("GNI")
-    st.markdown('<p class="subtitle-muted">Set your backend API URL below (or set <strong>GNI_API_BASE_URL</strong> in Streamlit Cloud Secrets).</p>', unsafe_allow_html=True)
+    _logo_path = Path(__file__).parent / "assets" / "whatsapp-logo.webp"
+    _c1, _c2, _c3 = st.columns([1, 2, 1])
+    with _c2:
+        if _logo_path.exists():
+            st.image(str(_logo_path), width=120)
+        st.markdown('<p class="subtitle-muted">Set your backend API URL below (or set <strong>GNI_API_BASE_URL</strong> in Streamlit Cloud Secrets).</p>', unsafe_allow_html=True)
     with st.form("backend_url_form"):
         url_input = st.text_input("Backend URL", placeholder="https://your-api.example.com:8000", key="url_input")
         st.caption("Example: https://api.yourdomain.com or https://YOUR_IP:8000 — no trailing slash.")
@@ -40,8 +46,12 @@ if not base:
 
 # --- 3) Login gate: card-style form + helper text; then Status placeholder ---
 if not st.session_state.get("auth_token") and not st.session_state.get("auth_email"):
-    st.title("GNI")
-    st.markdown('<p class="subtitle-muted">Sign in with your email and password to continue.</p>', unsafe_allow_html=True)
+    _logo_path = Path(__file__).parent / "assets" / "whatsapp-logo.webp"
+    _c1, _c2, _c3 = st.columns([1, 2, 1])
+    with _c2:
+        if _logo_path.exists():
+            st.image(str(_logo_path), width=120)
+        st.markdown('<p class="subtitle-muted">Sign in with your email and password to continue.</p>', unsafe_allow_html=True)
     with st.form("login_form"):
         email = st.text_input("Email", key="login_email", autocomplete="email")
         st.caption("Use the same email you registered with on the backend.")
