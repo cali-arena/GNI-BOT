@@ -1,24 +1,25 @@
 """
 JWT + API key authentication for control/admin endpoints.
 When neither JWT_SECRET nor API_KEY is set, auth is disabled (backward compat).
-Uses secrets provider (no hardcoding).
+Uses API settings (Pydantic); JWT_EXPIRY_SECONDS is always int, never raw string.
 """
 from typing import Optional
 
 from fastapi import HTTPException, Request, Security
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
-from apps.shared.secrets import get_secret
+from apps.api.core.settings import get_api_settings
 
 try:
     import jwt
 except ImportError:
     jwt = None
 
-JWT_SECRET = get_secret("JWT_SECRET")
-API_KEY = get_secret("API_KEY") or get_secret("ADMIN_API_KEY")
+_api_settings = get_api_settings()
+JWT_SECRET = _api_settings.JWT_SECRET
+API_KEY = _api_settings.API_KEY
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRY_SECONDS = int(get_secret("JWT_EXPIRY_SECONDS", "86400"))  # 24h
+JWT_EXPIRY_SECONDS: int = _api_settings.JWT_EXPIRY_SECONDS  # always int (86400 default)
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 http_bearer = HTTPBearer(auto_error=False)

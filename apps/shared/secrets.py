@@ -19,11 +19,16 @@ class SecretsProvider(Protocol):
 
 
 class EnvSecretsProvider:
-    """Read secrets from os.environ. Env can be populated by .env, docker, k8s, etc."""
+    """Read secrets from os.environ. Env can be populated by .env, docker, k8s, etc.
+    Treats empty string as missing: returns default when value is absent or blank after strip.
+    """
 
     def get(self, key: str, default: str = "") -> str:
         val = os.environ.get(key, default)
-        return val.strip() if isinstance(val, str) else default
+        if val is None:
+            return default
+        s = val.strip() if isinstance(val, str) else default
+        return s if s else default
 
 
 _provider: Optional[SecretsProvider] = None

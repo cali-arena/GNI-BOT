@@ -30,12 +30,18 @@ if _streamlit_origin:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import logging
+    logger = logging.getLogger(__name__)
     try:
         validate_env(role="api")
     except (ConfigError, EnvValidationError) as e:
-        import logging
-        logging.getLogger(__name__).error("Startup env validation failed: %s", e)
+        logger.error("Startup env validation failed: %s", e)
         raise
+    from apps.api.core.settings import get_api_settings
+    settings = get_api_settings()
+    # Safe one-line summary (no secrets)
+    db_mask = "postgresql://***" if (settings.DATABASE_URL or "").startswith("postgresql://") else "(not set)"
+    logger.info("Config loaded: DB=%s, JWT_EXPIRY_SECONDS=%s", db_mask, settings.JWT_EXPIRY_SECONDS)
     init_db()
     yield
     # Shutdown: Uvicorn handles SIGTERM; stop accepting new requests, drain in-flight
