@@ -46,7 +46,7 @@ docker compose ps
 
 1. **Pause** and **stop** stack
 2. Restore from latest backup (see RUNBOOK.md Backup/Restore)
-3. Run migrations: `docker compose run --rm api alembic upgrade head`
+3. Migrations run automatically on API/worker startup. If you need to run them manually (e.g. after restoring DB): `docker compose run --rm api alembic -c /app/alembic.ini upgrade head`
 4. **Resume** and restart
 
 ### Credential leak (API_KEY, Telegram, Make)

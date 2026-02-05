@@ -59,6 +59,16 @@ This runs `docker compose up -d`, waits until the API healthcheck passes (max 12
    docker compose down
    ```
 
+**API startup verification** (build, bring up stack, confirm health):
+
+```bash
+docker compose build api
+docker compose up -d
+curl -sf http://127.0.0.1:8000/health && echo " OK" || echo " FAIL"
+```
+
+Or run `./scripts/verify_api_startup.sh` from repo root (same steps; exits 0 only if health returns OK).
+
 **Services:** postgres, redis, ollama, api (FastAPI, port 8000), collector (RSS + Telegram ingest), worker (scoring → LLM → publish). All use an internal Docker network, healthchecks, and `restart: unless-stopped`.
 
 **Dependencies:** Single source of truth: `requirements.txt`. API, worker, and collector install from the same file. Key libs pinned: fastapi, uvicorn, sqlalchemy, psycopg2-binary, redis, httpx, telethon, feedparser, pydantic.
@@ -296,22 +306,17 @@ python -m apps.worker.run_pipeline --item-ids 1,2 --dry-run
 
 ## Database migrations (Alembic)
 
-Schema migrations use **Alembic**. Migrations live in `alembic/versions/`.
+Schema migrations use **Alembic**. Migrations live in `alembic/versions/`. Full lifecycle (structure, first boot, adding migrations): **`docs/ALEMBIC.md`**.
 
-**Upgrade (run on startup via API/worker init_db):**
+**First boot:** API and worker run `init_db()` on startup: if Alembic is present they run `alembic upgrade head`; if that fails or Alembic is missing they fall back to `Base.metadata.create_all()` so the app starts on a fresh DB with no manual steps.
+
+**Upgrade from repo root** (optional; migrations also run at startup):
 ```bash
 alembic upgrade head
 ```
+Requires `DATABASE_URL` in env or `.env`.
 
-**From repo root** (requires `DATABASE_URL` in env or `.env`):
-```bash
-alembic upgrade head
-```
-
-**Current migrations:**
-- `001_initial` — Creates all tables (sources, raw_items, items, drafts, publications, events_log, settings) and composite indexes.
-- `002_ensure` — Adds missing columns if absent (sources.type/tier/chat_id, items.source_type, publications.attempts, settings.feature_flags).
-- `003_indexes` — Adds composite indexes: items (status, created_at DESC), (fingerprint, created_at DESC); publications (channel, created_at DESC), (status, created_at DESC); drafts (item_id).
+**Current migrations:** `001_initial`, `002_ensure_missing_columns`, `003_add_composite_indexes`, `004_dead_letter_queue`, `005_users`. See `alembic/versions/`.
 
 **Backup (Postgres):** Run `scripts/backup_postgres.sh` (or `docker compose --profile backup run --rm backup`). Writes to `./backups/gni_YYYYMMDD_HHMMSS.sql`; retention via `BACKUP_RETENTION` (default 7). Cron (daily 02:30): `30 2 * * * /opt/gni-bot-creator/scripts/backup_postgres.sh`. Restore: see `docs/RUNBOOK.md` (Backup / Restore).
 
