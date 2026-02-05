@@ -1,54 +1,79 @@
 """
-WhatsApp Connect — QR and status. Client role only. Bearer token; never log QR.
+WhatsApp Connection — per-user QR and status via JWT (/whatsapp/*).
+Connect button -> POST /whatsapp/connect; poll GET /whatsapp/qr and GET /whatsapp/status every 2s.
 """
 import io
 import time
 import streamlit as st
-from src.auth import require_login, require_role
+from src.auth import require_login
 from src.config import validate_config
-from src.api import get_wa_status, get_wa_qr
+from src.api import post_wa_connect, get_wa_qr_user, get_wa_status_user
 
 validate_config()
 require_login()
-require_role(["client"])
 
-REFRESH_COOLDOWN_SECONDS = 10
-if "wa_qr_last_refresh" not in st.session_state:
-    st.session_state.wa_qr_last_refresh = 0
+# Sidebar: logged-in user, logout, home
+st.sidebar.caption("Logged in as **%s**" % (st.session_state.get("auth_email") or "—"))
+if st.sidebar.button("Log out"):
+    from src.auth import logout
+    logout()
+    st.switch_page("app.py")
+st.sidebar.page_link("app.py", label="Home", icon="🏠")
 
-def _can_refresh():
-    return (time.time() - st.session_state.wa_qr_last_refresh) >= REFRESH_COOLDOWN_SECONDS
-def _seconds_until_refresh():
-    return max(0, int(REFRESH_COOLDOWN_SECONDS - (time.time() - st.session_state.wa_qr_last_refresh)))
+# Use JWT endpoints (per-user)
+status_data, status_err = get_wa_status_user()
+qr_data, qr_err = get_wa_qr_user()
 
-status_data, _ = get_wa_status()
-qr_data, _ = get_wa_qr()
-connected = status_data.get("connected", False) if status_data else False
-qr_string = qr_data.get("qr") if qr_data else None
-last_reason = status_data.get("lastDisconnectReason") if status_data else None
+connected = False
+qr_string = None
+status_label = "Disconnected"
+last_reason = None
+if status_err and not status_data:
+    status_label = "Error" if status_err else "Disconnected"
+else:
+    if isinstance(status_data, dict):
+        connected = status_data.get("connected") or status_data.get("status") == "connected"
+        last_reason = status_data.get("lastDisconnectReason")
+        status_label = "Connected" if connected else ("Waiting QR" if (qr_data and (qr_data.get("qr") or (qr_data.get("status") == "qr_ready")) else "Disconnected")
+if isinstance(qr_data, dict) and qr_data.get("qr"):
+    qr_string = qr_data.get("qr")
 
-st.title("WhatsApp Connect")
+st.title("WhatsApp Connection")
+st.subheader("Status: %s" % status_label)
+if connected:
+    st.success("Connected ✅")
+    phone = (status_data or {}).get("phone")
+    if phone:
+        st.caption("Phone: %s" % phone)
+elif qr_err or status_err:
+    st.error(status_err or qr_err or "Disconnected")
+else:
+    st.info("Waiting QR" if qr_string else "Disconnected")
+if last_reason:
+    st.caption("Last disconnect: %s" % last_reason)
+
+st.divider()
 st.subheader("How to connect")
 steps = [
     "Open WhatsApp on your phone",
-    "Settings -> Linked Devices",
+    "Settings → Linked Devices",
     "Link a Device",
     "Scan the QR code below",
 ]
 for i, step in enumerate(steps, 1):
     st.markdown("%d. %s" % (i, step))
-st.progress(1.0, text="Step 4 of 4 — Scan the QR code")
-st.divider()
 
-if connected:
-    st.success("Connected")
-elif qr_string:
-    st.info("Waiting for scan")
-else:
-    st.error("Disconnected / expired")
-if last_reason:
-    st.caption("Last disconnect: " + str(last_reason))
+# Connect WhatsApp button
+if st.button("Connect WhatsApp", key="wa_connect"):
+    with st.spinner("Starting session…"):
+        _, err = post_wa_connect()
+        if err:
+            st.error(err)
+        else:
+            st.success("Session started. Fetching QR…")
+            st.rerun()
 
+# Show QR when we have one and not connected
 if not connected and qr_string:
     try:
         import qrcode
@@ -59,27 +84,27 @@ if not connected and qr_string:
         st.image(buf, caption="Scan with WhatsApp", use_container_width=False)
     except Exception:
         st.caption("QR could not be rendered.")
-    st.caption("QR expires quickly; use Refresh QR if it stops working.")
+    st.caption("QR expires quickly. Page refreshes every 2 seconds.")
 elif connected:
     st.caption("Session active. QR hidden.")
 
-col1, col2, col3 = st.columns([1, 1, 2])
-with col1:
-    if _can_refresh():
-        if st.button("Refresh QR", key="wa_refresh_qr"):
-            st.session_state.wa_qr_last_refresh = time.time()
+# Reconnect button (rate-limited on backend)
+if st.button("Reconnect", key="wa_reconnect"):
+    with st.spinner("Reconnecting…"):
+        _, err = post_wa_connect()
+        if err:
+            st.error(err)
+        else:
+            st.success("Reconnect started.")
             st.rerun()
-    else:
-        st.button("Refresh QR", key="wa_refresh_qr", disabled=True, help="Wait %ds" % _seconds_until_refresh())
-with col2:
-    if not _can_refresh():
-        st.caption("Available in %d s" % _seconds_until_refresh())
 
 with st.expander("FAQ"):
     st.markdown("**Why do I need this?**")
-    st.caption("This links the GNI bot to WhatsApp.")
+    st.caption("This links your WhatsApp account so the bot can send/receive messages.")
     st.markdown("**How to disconnect?**")
-    st.caption("In WhatsApp: Settings -> Linked Devices -> select this device -> Log out.")
+    st.caption("In WhatsApp: Settings → Linked Devices → select this device → Log out.")
 
-if status_data is None and not connected:
-    st.warning("API unreachable. Check GNI_API_BASE_URL and network.")
+# Poll every 2 seconds when not connected (so QR/status updates)
+if not connected and not (qr_err or status_err):
+    time.sleep(2)
+    st.rerun()

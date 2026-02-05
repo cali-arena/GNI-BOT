@@ -65,15 +65,17 @@ def login(email: str, password: str) -> bool:
 
 def logout() -> None:
     import streamlit as st
-    for key in ("auth_user", "auth_role", "auth_email"):
+    for key in ("auth_user", "auth_role", "auth_email", "auth_token"):
         if key in st.session_state:
             del st.session_state[key]
 
 def require_login() -> None:
     import streamlit as st
-    if not st.session_state.get("auth_email"):
-        st.warning("Please log in to continue.")
-        st.stop()
+    # Logged in if we have JWT (API login) or legacy session (seed user)
+    if st.session_state.get("auth_token") or st.session_state.get("auth_email"):
+        return
+    st.warning("Please log in to continue.")
+    st.stop()
 
 def require_role(roles):
     import streamlit as st

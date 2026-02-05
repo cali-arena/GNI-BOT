@@ -1,19 +1,24 @@
 """
 Central config: st.secrets first, then os.environ. No plaintext secrets in code.
-Required: GNI_API_BASE_URL, WA_QR_BRIDGE_TOKEN, SEED_CLIENT_EMAIL, SEED_CLIENT_PASSWORD.
+Required for Cloud: GNI_API_BASE_URL only (login via POST /auth/login, JWT in session; no WA tokens).
+Optional: SEED_CLIENT_* for legacy in-app fallback; API_KEY for monitoring/posts.
 """
 import os
 from typing import Any
 
 import streamlit as st
 
-REQUIRED_KEYS = (
-    "GNI_API_BASE_URL",
-    "WA_QR_BRIDGE_TOKEN",
+# Only API base URL required; Streamlit talks to API over HTTPS, uses JWT (no WA_QR_BRIDGE_TOKEN)
+REQUIRED_KEYS = ("GNI_API_BASE_URL",)
+OPTIONAL_KEYS = (
     "SEED_CLIENT_EMAIL",
     "SEED_CLIENT_PASSWORD",
+    "SEED_CLIENT_ROLE",
+    "WA_QR_BRIDGE_TOKEN",
+    "API_KEY",
+    "ADMIN_API_KEY",
+    "AUTO_REFRESH_SECONDS",
 )
-OPTIONAL_KEYS = ("SEED_CLIENT_ROLE", "API_KEY", "ADMIN_API_KEY", "AUTO_REFRESH_SECONDS")
 
 
 def _get(key: str, default: str = "") -> str:
@@ -50,6 +55,12 @@ def get_config() -> dict[str, Any]:
         "API_KEY": api_key,
         "AUTO_REFRESH_SECONDS": auto_refresh,
     }
+
+
+def has_seed_for_legacy() -> bool:
+    """True if SEED_CLIENT_EMAIL and SEED_CLIENT_PASSWORD are set (legacy in-app login fallback)."""
+    c = get_config()
+    return bool((c.get("SEED_CLIENT_EMAIL") or "").strip() and (c.get("SEED_CLIENT_PASSWORD") or "").strip())
 
 
 def validate_config() -> None:

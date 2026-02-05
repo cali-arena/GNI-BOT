@@ -27,6 +27,75 @@ def _base_url() -> str:
     return (_get_config().get("GNI_API_BASE_URL") or "").strip().rstrip("/")
 
 
+def _headers_jwt(token: Optional[str] = None) -> dict:
+    """Headers with JWT from session (for /auth/me, /whatsapp/*)."""
+    h = {"Content-Type": "application/json"}
+    t = (token or "").strip()
+    if not t:
+        try:
+            import streamlit as st
+            t = (st.session_state.get("auth_token") or "").strip()
+        except Exception:
+            pass
+    if t:
+        h["Authorization"] = f"Bearer {t}"
+    return h
+
+
+def api_get_jwt(path: str, *, timeout: int = 10, token: Optional[str] = None) -> tuple[Optional[Any], Optional[str]]:
+    """GET with JWT from session (or passed token). For /auth/me, /whatsapp/*."""
+    import requests
+    base = _base_url()
+    if not base:
+        return None, "API base URL not set"
+    url = f"{base}{path}"
+    try:
+        r = requests.get(url, headers=_headers_jwt(token=token), timeout=timeout)
+        r.raise_for_status()
+        return r.json() if r.content else None, None
+    except requests.exceptions.HTTPError as e:
+        try:
+            detail = e.response.json().get("detail", "Request failed")
+        except Exception:
+            detail = "Request failed"
+        if e.response.status_code == 401:
+            return None, "Invalid or expired token. Please log in again."
+        if e.response.status_code == 404:
+            return None, "Endpoint not found."
+        return None, str(detail)[:200]
+    except requests.exceptions.Timeout:
+        return None, "Request timed out."
+    except Exception:
+        return None, "Connection error."
+
+
+def api_post_jwt(path: str, json_body: Optional[dict] = None, *, timeout: int = 10, token: Optional[str] = None) -> tuple[Optional[Any], Optional[str]]:
+    """POST with JWT from session. For /auth/login, /whatsapp/connect."""
+    import requests
+    base = _base_url()
+    if not base:
+        return None, "API base URL not set"
+    url = f"{base}{path}"
+    try:
+        r = requests.post(url, headers=_headers_jwt(token=token), json=json_body or {}, timeout=timeout)
+        r.raise_for_status()
+        return r.json() if r.content else {}, None
+    except requests.exceptions.HTTPError as e:
+        try:
+            detail = e.response.json().get("detail", "Request failed")
+        except Exception:
+            detail = "Request failed"
+        if e.response.status_code == 401:
+            return None, "Invalid or expired token. Please log in again."
+        if e.response.status_code == 429:
+            return None, "Rate limit exceeded. Try again later."
+        return None, str(detail)[:200]
+    except requests.exceptions.Timeout:
+        return None, "Request timed out."
+    except Exception:
+        return None, "Connection error."
+
+
 def api_get(path: str, *, timeout: int = 10, use_bearer: bool = True) -> tuple[Optional[Any], Optional[str]]:
     """GET {base}{path}. Returns (data, error). On non-200 returns friendly error (no secrets)."""
     import requests
@@ -92,6 +161,48 @@ def get_wa_status() -> tuple[Optional[dict], Optional[str]]:
 
 def get_wa_qr() -> tuple[Optional[dict], Optional[str]]:
     return api_get("/admin/wa/qr", use_bearer=True)
+
+
+# --- JWT / per-user WhatsApp (use these when auth_token is in session) ---
+def post_auth_login(email: str, password: str) -> tuple[Optional[dict], Optional[str]]:
+    """POST /auth/login. Returns (body with access_token, error). No auth header."""
+    import requests
+    base = _base_url()
+    if not base:
+        return None, "API base URL not set"
+    url = f"{base}/auth/login"
+    try:
+        r = requests.post(url, headers={"Content-Type": "application/json"}, json={"email": email, "password": password}, timeout=10)
+        r.raise_for_status()
+        return r.json() if r.content else None, None
+    except requests.exceptions.HTTPError as e:
+        try:
+            detail = e.response.json().get("detail", "Request failed")
+        except Exception:
+            detail = "Request failed"
+        return None, str(detail)[:200]
+    except Exception:
+        return None, "Connection error."
+
+
+def get_auth_me() -> tuple[Optional[dict], Optional[str]]:
+    """GET /auth/me. Requires auth_token in session."""
+    return api_get_jwt("/auth/me")
+
+
+def post_wa_connect() -> tuple[Optional[dict], Optional[str]]:
+    """POST /whatsapp/connect. Requires JWT."""
+    return api_post_jwt("/whatsapp/connect", json_body={})
+
+
+def get_wa_qr_user() -> tuple[Optional[dict], Optional[str]]:
+    """GET /whatsapp/qr. Requires JWT. Never log qr content."""
+    return api_get_jwt("/whatsapp/qr")
+
+
+def get_wa_status_user() -> tuple[Optional[dict], Optional[str]]:
+    """GET /whatsapp/status. Requires JWT."""
+    return api_get_jwt("/whatsapp/status")
 
 
 def get_monitoring_status(tenant: Optional[str] = None) -> tuple[Optional[dict], Optional[str]]:
