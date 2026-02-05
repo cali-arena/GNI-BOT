@@ -47,30 +47,51 @@ SessionLocal = sessionmaker(
 
 
 def init_db() -> None:
-    """Run Alembic migrations (alembic upgrade head). Idempotent. In Docker uses -c /app/alembic.ini."""
+    """
+    Bootstrap DB: use Alembic when present and applicable; otherwise fall back to Base.metadata.create_all().
+    Logs which path was taken. Idempotent.
+    """
     import subprocess
     import sys
     from pathlib import Path
 
     _here = Path(__file__).resolve().parent  # db/
+    alembic_ini: Path | None = None
     if Path("/app/alembic.ini").exists():
-        # API container: explicit config path, no reliance on CWD
-        alembic_cmd = [sys.executable, "-m", "alembic", "-c", "/app/alembic.ini", "upgrade", "head"]
+        alembic_ini = Path("/app/alembic.ini")
         cwd = "/app"
     else:
-        # Local or worker: find repo root
         for candidate in (_here.parent.parent.parent.parent, _here.parent.parent.parent, _here.parent.parent):
             if (candidate / "alembic.ini").exists():
+                alembic_ini = candidate / "alembic.ini"
                 cwd = str(candidate)
                 break
         else:
             cwd = str(_here.parent.parent)
-        if not (Path(cwd) / "alembic.ini").exists():
-            raise RuntimeError("alembic.ini not found; in Docker expect /app/alembic.ini")
-        alembic_cmd = [sys.executable, "-m", "alembic", "upgrade", "head"]
-    result = subprocess.run(alembic_cmd, cwd=cwd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"alembic upgrade head failed: {result.stderr or result.stdout}")
+
+    # Alembic present: try upgrade head first
+    if alembic_ini is not None and alembic_ini.exists():
+        alembic_dir = alembic_ini.parent / "alembic"
+        if alembic_dir.is_dir():
+            cmd = (
+                [sys.executable, "-m", "alembic", "-c", str(alembic_ini), "upgrade", "head"]
+                if str(alembic_ini).startswith("/app")
+                else [sys.executable, "-m", "alembic", "upgrade", "head"]
+            )
+            result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+            if result.returncode == 0:
+                logger.info("DB bootstrap: alembic upgrade head succeeded")
+                return
+            logger.warning(
+                "DB bootstrap: alembic upgrade head failed (exit %s), falling back to create_all: %s",
+                result.returncode,
+                (result.stderr or result.stdout or "").strip()[:500],
+            )
+
+    # Fallback: no Alembic or upgrade failed (e.g. no revisions yet) — create_all for fresh envs
+    from db.models import Base
+    Base.metadata.create_all(engine)
+    logger.info("DB bootstrap: Base.metadata.create_all (fallback; alembic not present or no revisions)")
 
 
 def _safe_close_session(session: Session | None) -> None:
