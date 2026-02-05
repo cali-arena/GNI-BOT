@@ -18,8 +18,12 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Use Base.metadata from our models for autogenerate
-from apps.api.db.models import Base
+# Use Base.metadata from our models for autogenerate.
+# In Docker API container (CWD=/app): use db.models. Locally (repo root): use apps.api.db.models.
+try:
+    from db.models import Base
+except ModuleNotFoundError:
+    from apps.api.db.models import Base
 
 target_metadata = Base.metadata
 

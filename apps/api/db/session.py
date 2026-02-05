@@ -47,21 +47,28 @@ SessionLocal = sessionmaker(
 
 
 def init_db() -> None:
-    """Run Alembic migrations (alembic upgrade head). Idempotent."""
+    """Run Alembic migrations (alembic upgrade head). Idempotent. In Docker uses -c /app/alembic.ini."""
     import subprocess
     import sys
     from pathlib import Path
 
     _here = Path(__file__).resolve().parent  # db/
-    # Repo root: apps/api/db -> parent^3; worker COPY . : /app/apps/api/db -> parent^4; api COPY : /app/db -> parent^2
-    for candidate in (_here.parent.parent.parent.parent, _here.parent.parent.parent, _here.parent.parent):
-        if (candidate / "alembic.ini").exists():
-            repo_root = candidate
-            break
+    if Path("/app/alembic.ini").exists():
+        # API container: explicit config path, no reliance on CWD
+        alembic_cmd = [sys.executable, "-m", "alembic", "-c", "/app/alembic.ini", "upgrade", "head"]
+        cwd = "/app"
     else:
-        repo_root = _here.parent.parent
-    alembic_cmd = [sys.executable, "-m", "alembic", "upgrade", "head"]
-    result = subprocess.run(alembic_cmd, cwd=repo_root, capture_output=True, text=True)
+        # Local or worker: find repo root
+        for candidate in (_here.parent.parent.parent.parent, _here.parent.parent.parent, _here.parent.parent):
+            if (candidate / "alembic.ini").exists():
+                cwd = str(candidate)
+                break
+        else:
+            cwd = str(_here.parent.parent)
+        if not (Path(cwd) / "alembic.ini").exists():
+            raise RuntimeError("alembic.ini not found; in Docker expect /app/alembic.ini")
+        alembic_cmd = [sys.executable, "-m", "alembic", "upgrade", "head"]
+    result = subprocess.run(alembic_cmd, cwd=cwd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"alembic upgrade head failed: {result.stderr or result.stdout}")
 
