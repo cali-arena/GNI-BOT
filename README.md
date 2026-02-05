@@ -65,6 +65,36 @@ This runs `docker compose up -d`, waits until the API healthcheck passes (max 12
 
 **Docker security:** Containers run as root. For production hardening, add a non-root user in Dockerfiles; bind mounts (e.g. `./data/telethon`) may need `chown` to match container uid.
 
+### Streamlit app (WhatsApp Connect)
+
+Login + WhatsApp Connect UI. Talks only to your FastAPI backend (no secrets required in the app).
+
+**Run locally:**
+
+```bash
+# From repo root (uses streamlit_app.py entrypoint)
+pip install -r requirements-streamlit.txt
+streamlit run streamlit_app.py
+
+# Or from the app folder
+cd apps/wa-qr-cloud-ui
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+**Point to your VM backend (no secrets file):**
+
+- **Query param (recommended):** Open the app with `?api_base_url=http://YOUR_VM_IP:8000` (e.g. `https://yourapp.streamlit.app/?api_base_url=http://1.2.3.4:8000`). Replace `YOUR_VM_IP` with your VM’s public IP.
+- **Env (optional):** Set `API_BASE_URL=http://YOUR_VM_IP:8000` in Streamlit Cloud → Settings → Environment variables, or when running locally.
+
+No `.streamlit/secrets.toml` or other secrets are required; the app works with the query param or env only.
+
+**Streamlit Cloud deployment:**
+
+- **Main file path:** `streamlit_app.py` (repo root).
+- **Requirements file:** `requirements-streamlit.txt` (in Cloud app settings, set this so only Streamlit deps are installed).
+- **Secrets:** None. Optional env `API_BASE_URL` if you don’t want to use the query param.
+
 ### Production VM deployment
 
 The `docker-compose.yml` is tuned for production:
