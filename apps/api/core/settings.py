@@ -39,18 +39,28 @@ class ApiSettings(BaseSettings):
         if v is None:
             return JWT_EXPIRY_DEFAULT
         if isinstance(v, int):
-            return max(JWT_EXPIRY_MIN, min(v, JWT_EXPIRY_MAX)) if v else JWT_EXPIRY_DEFAULT
+            if v < 1:
+                raise ValueError(
+                    "JWT_EXPIRY_SECONDS must be an integer > 0 (1–604800). "
+                    "Fix or remove the env var to use default 86400."
+                )
+            return max(JWT_EXPIRY_MIN, min(v, JWT_EXPIRY_MAX))
         s = (v or "").strip()
         if not s:
             return JWT_EXPIRY_DEFAULT
         try:
             n = int(s)
-            return max(JWT_EXPIRY_MIN, min(n, JWT_EXPIRY_MAX)) if n else JWT_EXPIRY_DEFAULT
         except ValueError:
             raise ValueError(
                 "JWT_EXPIRY_SECONDS must be an integer between 1 and 604800 (e.g. 86400 for 24h). "
                 "Fix or remove the env var to use default 86400."
             )
+        if n < 1:
+            raise ValueError(
+                "JWT_EXPIRY_SECONDS must be > 0 (got %s). Use 1–604800 or remove to use default 86400."
+                % n
+            )
+        return max(JWT_EXPIRY_MIN, min(n, JWT_EXPIRY_MAX))
 
     @classmethod
     def from_env(cls) -> "ApiSettings":

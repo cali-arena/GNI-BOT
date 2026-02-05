@@ -89,7 +89,7 @@ def init_db() -> None:
             )
 
     # Fallback: no Alembic or upgrade failed (e.g. no revisions yet) — create_all for fresh envs
-    from db.models import Base
+    from .models import Base
     Base.metadata.create_all(engine)
     logger.info("DB bootstrap: Base.metadata.create_all (fallback; alembic not present or no revisions)")
 

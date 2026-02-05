@@ -3,18 +3,18 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from auth import require_auth
-from db import init_db
-from middleware import RateLimitMiddleware, RequestIdMiddleware, RequestSizeLimitMiddleware
-from routes.admin import router as admin_router
-from routes.auth_routes import router as auth_router
-from routes.control import router as control_router
-from routes.dlq import router as dlq_router
-from routes.health import router as health_router
-from routes.metrics import router as metrics_router
-from routes.review import router as review_router
-from routes.sources import router as sources_router
-from routes.wa_bridge import router as wa_bridge_router
+from .auth import require_auth
+from .db import init_db
+from .middleware import RateLimitMiddleware, RequestIdMiddleware, RequestSizeLimitMiddleware
+from .routes.admin import router as admin_router
+from .routes.auth_routes import router as auth_router
+from .routes.control import router as control_router
+from .routes.dlq import router as dlq_router
+from .routes.health import router as health_router
+from .routes.metrics import router as metrics_router
+from .routes.review import router as review_router
+from .routes.sources import router as sources_router
+from .routes.wa_bridge import router as wa_bridge_router
 
 from apps.shared.config import ConfigError, validate_config
 from apps.shared.env_validation import EnvValidationError, validate_env

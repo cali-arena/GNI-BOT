@@ -2,7 +2,7 @@
 from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse, Response
 
-from db import SessionLocal
+from ..db import SessionLocal
 
 router = APIRouter(tags=["metrics"])
 

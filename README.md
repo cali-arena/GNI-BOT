@@ -490,6 +490,7 @@ Copy from `.env.example`. Compose provides defaults for Postgres and Redis so `u
 | `API_HOST` | API | Bind host |
 | `API_PORT` | API | Bind port |
 | `API_SECRET_KEY` | API | Secret key placeholder |
+| `JWT_EXPIRY_SECONDS` | API | JWT expiry in seconds; integer 1–604800. Missing/empty → 86400. Invalid or ≤0 → startup error. |
 | `COLLECTOR_INTERVAL_MINUTES` | collector | Ingest interval in minutes (default: 15) |
 | `RSS_SOURCES_PATH` | Collector | Path to sources config |
 | `TELEGRAM_API_ID` | collector | API ID from my.telegram.org (for ingest) |

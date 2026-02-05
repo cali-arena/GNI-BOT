@@ -4,9 +4,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from db import check_db, get_db_dependency
-from db.models import Draft, EventsLog, Item, Publication
-from schemas import (
+from ..db import check_db, get_db_dependency
+from ..db.models import Draft, EventsLog, Item, Publication
+from ..schemas import (
     DependencyStatus,
     FailureEventOut,
     PauseResponse,
@@ -15,7 +15,7 @@ from schemas import (
     StatusResponse,
     StatusStats,
 )
-from settings import get_feature_flag, get_settings, set_feature_flag, set_settings
+from ..settings import get_feature_flag, get_settings, set_feature_flag, set_settings
 
 router = APIRouter(prefix="/control", tags=["control"])
 

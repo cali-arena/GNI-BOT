@@ -99,3 +99,21 @@ class TestApiSettingsJwtExpiry:
             API_KEY="",
         )
         assert s.JWT_EXPIRY_SECONDS == 3600
+
+    def test_zero_or_negative_raises(self):
+        with pytest.raises(ValueError, match="JWT_EXPIRY_SECONDS must be"):
+            ApiSettings(
+                DATABASE_URL="postgresql://u:p@h/d",
+                REDIS_URL="redis://localhost/0",
+                JWT_SECRET="",
+                JWT_EXPIRY_SECONDS=0,
+                API_KEY="",
+            )
+        with pytest.raises(ValueError, match="JWT_EXPIRY_SECONDS must be"):
+            ApiSettings(
+                DATABASE_URL="postgresql://u:p@h/d",
+                REDIS_URL="redis://localhost/0",
+                JWT_SECRET="",
+                JWT_EXPIRY_SECONDS="-1",
+                API_KEY="",
+            )

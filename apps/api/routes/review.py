@@ -2,8 +2,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from db import get_db_dependency
-from db.models import Item
+from ..db import get_db_dependency
+from ..db.models import Item
 
 router = APIRouter(prefix="/review", tags=["review"])
 
