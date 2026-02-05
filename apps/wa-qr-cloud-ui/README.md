@@ -1,14 +1,21 @@
-# WhatsApp Connect — Login + QR
+# WhatsApp Connect — Streamlit Cloud UI
 
-Streamlit app: **Login** and **WhatsApp Connect** (QR + status). Talks only to your FastAPI backend.
+Login and WhatsApp Connect (QR + status). Talks to your FastAPI backend. **No secrets required** for deployment.
 
-- **No secrets required.** App boots immediately. Use query param `?api_base_url=...` or env `API_BASE_URL` (optional).
-- Login: email/password → `POST {backend}/auth/login` → token in session (never shown on screen).
-- WhatsApp Connect: connect, poll status/QR via backend; QR rendered with qrcode+PIL.
+## No secrets required
+
+The app uses a **default API URL** in code. You can run it on Streamlit Cloud with **zero secrets** configured. No `GNI_API_BASE_URL` or `.streamlit/secrets.toml` needed.
+
+**Optional override (for a different backend):**
+
+- **Streamlit Cloud:** Settings → Environment variables → `GNI_API_BASE_URL` = `http://your-host:8000`
+- **Or** Settings → Secrets → `GNI_API_BASE_URL` = `http://your-host:8000`
+
+If the backend is temporarily down, the app still loads and shows a generic message (“Something went wrong. Please try again later.”). No stack traces or hostnames are shown to users.
 
 ## Run locally
 
-**From repo root (recommended for Streamlit Cloud parity):**
+**From repo root (same as Streamlit Cloud):**
 
 ```bash
 pip install -r requirements-streamlit.txt
@@ -23,10 +30,32 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-**Point to VM backend:** Use `?api_base_url=http://VM_IP:8000` in the URL, or set env `API_BASE_URL`. No `.streamlit/secrets.toml` or other secrets needed.
+## Streamlit Cloud deployment
 
-## Streamlit Cloud
+### Entrypoint and requirements
 
-- **Main file:** `streamlit_app.py` (at repo root).
-- **Requirements file:** `requirements-streamlit.txt`.
-- **Secrets:** None required. Optional env `API_BASE_URL`.
+- **Main file path:** `streamlit_app.py` (repo root)
+- **Requirements file:** `requirements-streamlit.txt` (repo root)
+- **Root directory:** leave empty (repo root)
+
+### Redeploy after code changes
+
+1. Commit and push to the branch your app uses (e.g. `main`):
+   ```bash
+   git add .
+   git commit -m "Streamlit: your message"
+   git push origin main
+   ```
+2. Streamlit Cloud **auto-deploys on push**. Wait 1–2 minutes.
+3. Optional: open the app on share.streamlit.io → **Manage app** → **Reboot app** to force an immediate redeploy.
+
+No need to add or change secrets when redeploying.
+
+## Dependencies (requirements.txt)
+
+- streamlit
+- requests
+- qrcode[pil]
+- pillow
+
+All are listed in `apps/wa-qr-cloud-ui/requirements.txt` and in the root `requirements-streamlit.txt`.
