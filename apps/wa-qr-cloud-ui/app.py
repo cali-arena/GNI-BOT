@@ -4,7 +4,6 @@ No backend config in UI. No debug or tracebacks. All errors → short user-frien
 """
 import io
 import time
-from pathlib import Path
 import streamlit as st
 
 from src.api_base import get_api_base_url
@@ -45,9 +44,6 @@ def logout():
 
 # --- Page 1: Login ---
 if not st.session_state.get("logged_in") or not st.session_state.get("token"):
-    _logo_path = Path(__file__).resolve().parent / "logo.jpg"
-    if _logo_path.exists():
-        st.image(str(_logo_path), use_column_width=True)
     st.title("WhatsApp Connect")
     st.subheader("Log in")
     with st.form("login_form"):
@@ -76,10 +72,7 @@ if not st.session_state.get("logged_in") or not st.session_state.get("token"):
 # --- Page 2: WhatsApp Connect ---
 token = (st.session_state.get("token") or "").strip()
 
-# Sidebar: logo, no backend config, logout
-_logo_path = Path(__file__).resolve().parent / "logo.jpg"
-if _logo_path.exists():
-    st.sidebar.image(str(_logo_path), use_column_width=True)
+# Sidebar: no backend config, logout
 st.sidebar.title("WhatsApp Connect")
 st.sidebar.caption("Logged in as **%s**" % (st.session_state.get("email") or ""))
 if st.sidebar.button("Log out"):
