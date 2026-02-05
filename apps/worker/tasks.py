@@ -126,11 +126,11 @@ def step_scoring(limit: int = 100, item_ids: Optional[list[int]] = None) -> int:
         session.close()
 
 
-def step_llm_draft(limit: int = 20) -> int:
+def step_llm_draft(limit: int = 20, item_ids: Optional[list[int]] = None) -> int:
     """For items status=scored: classify+generate, create Draft, set status=drafted. On error set status=failed."""
     span = _tracer.start_as_current_span("step_llm_draft") if _tracer else _null_ctx()
     with span:
-        return _step_llm_draft_impl(limit)
+        return _step_llm_draft_impl(limit=limit, item_ids=item_ids)
 
 
 def _step_llm_draft_impl(limit: int = 20, item_ids: Optional[list[int]] = None) -> int:
@@ -498,6 +498,9 @@ def run_pipeline(
     """
     if dry_run is None:
         dry_run = _dry_run()
+    # Defensive: step_* expect None or list[int]; avoid crashes from wrong type (e.g. from API)
+    if item_ids is not None and not isinstance(item_ids, list):
+        item_ids = None
     out = {
         "scoring": 0,
         "llm_draft": 0,
@@ -556,6 +559,10 @@ def run_scheduler() -> None:
     interval_sec = max(1, RUN_EVERY_MINUTES * 60)
     dry_run = _dry_run()
     _log_info("Pipeline scheduler started", interval_min=RUN_EVERY_MINUTES, dry_run=dry_run)
+    try:
+        _log_info("step_llm_draft signature check", step_llm_draft_sig=str(inspect.signature(step_llm_draft)))
+    except Exception:
+        pass
     while not _worker_shutdown:
         try:
             result = run_pipeline(dry_run=dry_run)
