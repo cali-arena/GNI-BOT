@@ -1,0 +1,146 @@
+"""
+API wrapper: api_get / api_post with base URL and auth. Friendly errors; never log secrets.
+"""
+from typing import Any, Optional
+
+
+def _get_config():
+    from src.config import get_config
+    return get_config()
+
+
+def _headers(use_bearer: bool = True) -> dict:
+    cfg = _get_config()
+    h = {"Content-Type": "application/json"}
+    if use_bearer:
+        token = (cfg.get("WA_QR_BRIDGE_TOKEN") or "").strip()
+        if token:
+            h["Authorization"] = f"Bearer {token}"
+    else:
+        api_key = (cfg.get("API_KEY") or "").strip()
+        if api_key:
+            h["X-API-Key"] = api_key
+    return h
+
+
+def _base_url() -> str:
+    return (_get_config().get("GNI_API_BASE_URL") or "").strip().rstrip("/")
+
+
+def api_get(path: str, *, timeout: int = 10, use_bearer: bool = True) -> tuple[Optional[Any], Optional[str]]:
+    """GET {base}{path}. Returns (data, error). On non-200 returns friendly error (no secrets)."""
+    import requests
+    base = _base_url()
+    if not base:
+        return None, "API base URL not set"
+    url = f"{base}{path}"
+    try:
+        r = requests.get(url, headers=_headers(use_bearer=use_bearer), timeout=timeout)
+        r.raise_for_status()
+        return r.json() if r.content else None, None
+    except requests.exceptions.HTTPError as e:
+        try:
+            detail = e.response.json().get("detail", "Request failed")
+        except Exception:
+            detail = "Request failed"
+        if e.response.status_code == 401:
+            return None, "Authentication failed. Check your secrets."
+        if e.response.status_code == 404:
+            return None, "Endpoint not found."
+        return None, str(detail)[:200]
+    except requests.exceptions.Timeout:
+        return None, "Request timed out."
+    except Exception as e:
+        return None, "Connection error."
+
+
+def api_post(path: str, json_body: Optional[dict] = None, *, timeout: int = 10, use_bearer: bool = False) -> tuple[Optional[Any], Optional[str]]:
+    """POST {base}{path}. Returns (data, error). use_bearer=True for WA bridge; False for API key (monitoring/posts)."""
+    import requests
+    base = _base_url()
+    if not base:
+        return None, "API base URL not set"
+    url = f"{base}{path}"
+    try:
+        r = requests.post(url, headers=_headers(use_bearer=use_bearer), json=json_body or {}, timeout=timeout)
+        r.raise_for_status()
+        return r.json() if r.content else {}, None
+    except requests.exceptions.HTTPError as e:
+        try:
+            detail = e.response.json().get("detail", "Request failed")
+        except Exception:
+            detail = "Request failed"
+        if e.response.status_code == 401:
+            return None, "Authentication failed. Check your secrets."
+        if e.response.status_code == 404:
+            return None, "Endpoint not found."
+        return None, str(detail)[:200]
+    except requests.exceptions.Timeout:
+        return None, "Request timed out."
+    except Exception as e:
+        return None, "Connection error."
+
+
+# --- Convenience (used by pages) ---
+def get_health() -> tuple[Optional[dict], Optional[str]]:
+    return api_get("/health", use_bearer=False)
+
+
+def get_wa_status() -> tuple[Optional[dict], Optional[str]]:
+    return api_get("/admin/wa/status", use_bearer=True)
+
+
+def get_wa_qr() -> tuple[Optional[dict], Optional[str]]:
+    return api_get("/admin/wa/qr", use_bearer=True)
+
+
+def get_monitoring_status(tenant: Optional[str] = None) -> tuple[Optional[dict], Optional[str]]:
+    path = "/monitoring/status"
+    if tenant:
+        path += "?" + __import__("urllib.parse").urlencode({"tenant": tenant})
+    return api_get(path, use_bearer=False)
+
+
+def get_monitoring_recent(limit: int = 20, tenant: Optional[str] = None) -> tuple[Optional[list], Optional[str]]:
+    params = {"limit": limit}
+    if tenant:
+        params["tenant"] = tenant
+    path = "/monitoring/recent?" + __import__("urllib.parse").urlencode(params)
+    data, err = api_get(path, use_bearer=False)
+    if err:
+        return None, err
+    if isinstance(data, list):
+        return data, None
+    if isinstance(data, dict) and "items" in data:
+        return data["items"], None
+    return data or [], None
+
+
+def post_monitoring_run(tenant: Optional[str] = None) -> tuple[Optional[dict], Optional[str]]:
+    return api_post("/monitoring/run", json_body={"tenant": tenant} if tenant else None, use_bearer=False)
+
+
+def get_posts(status: str = "pending", limit: int = 20, tenant: Optional[str] = None) -> tuple[Optional[list], Optional[str]]:
+    if status == "pending":
+        data, err = api_get("/review/pending", use_bearer=False)
+    else:
+        params = {"status": status, "limit": limit}
+        if tenant:
+            params["tenant"] = tenant
+        path = "/posts?" + __import__("urllib.parse").urlencode(params)
+        data, err = api_get(path, use_bearer=False)
+    if err:
+        return None, err
+    if isinstance(data, list):
+        return data, None
+    if isinstance(data, dict) and "items" in data:
+        return data["items"], None
+    return data or [], None
+
+
+def post_approve(post_id: int) -> tuple[Optional[dict], Optional[str]]:
+    return api_post(f"/review/{post_id}/approve", use_bearer=False)
+
+
+def post_reject(post_id: int) -> tuple[Optional[dict], Optional[str]]:
+    return api_post(f"/review/{post_id}/reject", use_bearer=False)

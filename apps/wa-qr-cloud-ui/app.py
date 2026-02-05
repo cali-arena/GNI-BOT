@@ -1,137 +1,72 @@
 """
-WhatsApp Connect — GNI. Streamlit UI for QR + connection status via FastAPI QR Bridge.
-Never logs or displays the bridge token. Optional UI_PASSWORD gate.
+Home — GNI Streamlit app. Config from secrets; auth in session only; role-based nav.
 """
-import io
-import os
-from datetime import timedelta
-
-import requests
 import streamlit as st
 
-# Page config must be first Streamlit command
-st.set_page_config(page_title="WhatsApp Connect — GNI", layout="centered")
+from src.config import get_config, validate_config
+from src.auth import seed_user_if_needed, login, logout, current_user, require_login
+from src.api import get_health
 
-# --- Config from env (never log token) ---
-GNI_API_BASE_URL = (os.environ.get("GNI_API_BASE_URL") or "").strip().rstrip("/")
-WA_QR_BRIDGE_TOKEN = (os.environ.get("WA_QR_BRIDGE_TOKEN") or "").strip()
-UI_PASSWORD = (os.environ.get("UI_PASSWORD") or "").strip()
-try:
-    AUTO_REFRESH_SECONDS = int(os.environ.get("AUTO_REFRESH_SECONDS", "3"))
-except ValueError:
-    AUTO_REFRESH_SECONDS = 3
+st.set_page_config(page_title="GNI — Home", layout="centered", initial_sidebar_state="expanded")
 
-REQUEST_TIMEOUT = 10
+# --- 1) Validate config (required keys); then seed user from secrets ---
+validate_config()
+seed_user_if_needed()
 
+# --- 2) Session state for auth ---
+for key in ("auth_user", "auth_role", "auth_email"):
+    if key not in st.session_state:
+        st.session_state[key] = None
 
-def _headers():
-    return {"Authorization": f"Bearer {WA_QR_BRIDGE_TOKEN}"} if WA_QR_BRIDGE_TOKEN else {}
-
-
-def fetch_status():
-    """GET /admin/wa/status. Returns dict or None on error."""
-    if not GNI_API_BASE_URL or not WA_QR_BRIDGE_TOKEN:
-        return None
-    try:
-        r = requests.get(
-            f"{GNI_API_BASE_URL}/admin/wa/status",
-            headers=_headers(),
-            timeout=REQUEST_TIMEOUT,
-        )
-        r.raise_for_status()
-        return r.json()
-    except Exception:
-        return None
-
-
-def fetch_qr():
-    """GET /admin/wa/qr. Returns dict with qr (str or None), expires_in, server_time; or None on error."""
-    if not GNI_API_BASE_URL or not WA_QR_BRIDGE_TOKEN:
-        return None
-    try:
-        r = requests.get(
-            f"{GNI_API_BASE_URL}/admin/wa/qr",
-            headers=_headers(),
-            timeout=REQUEST_TIMEOUT,
-        )
-        r.raise_for_status()
-        return r.json()
-    except Exception:
-        return None
-
-
-# --- Session state: password gate ---
-if "wa_ui_authenticated" not in st.session_state:
-    st.session_state.wa_ui_authenticated = False
-
-if UI_PASSWORD and not st.session_state.wa_ui_authenticated:
-    st.title("WhatsApp Connect — GNI")
-    pwd = st.text_input("Password", type="password", key="wa_ui_pwd")
-    if st.button("Unlock"):
-        if pwd == UI_PASSWORD:
-            st.session_state.wa_ui_authenticated = True
-            st.rerun()
-        else:
-            st.error("Incorrect password.")
+# --- 3) Login gate ---
+if not st.session_state.auth_email:
+    st.title("GNI")
+    st.subheader("Log in")
+    with st.form("login_form"):
+        email = st.text_input("Email", key="login_email", autocomplete="email")
+        password = st.text_input("Password", type="password", key="login_password", autocomplete="current-password")
+        submitted = st.form_submit_button("Log in")
+        if submitted:
+            if login((email or "").strip(), password or ""):
+                st.rerun()
+            else:
+                st.error("Invalid email or password.")
     st.stop()
 
-# --- Require config when showing dashboard ---
-if not GNI_API_BASE_URL or not WA_QR_BRIDGE_TOKEN:
-    st.title("WhatsApp Connect — GNI")
-    st.error("Missing configuration. Set **GNI_API_BASE_URL** and **WA_QR_BRIDGE_TOKEN** in the environment.")
-    st.stop()
-
-st.title("WhatsApp Connect — GNI")
-
-# Manual refresh trigger
-if st.button("Refresh now"):
+# --- 4) Role-based sidebar (only show allowed pages) ---
+role = (st.session_state.get("auth_role") or "client").strip().lower()
+st.sidebar.title("GNI")
+st.sidebar.caption(f"Logged in as **{st.session_state.auth_email}**")
+if st.sidebar.button("Log out"):
+    logout()
     st.rerun()
 
+# Nav: client = WhatsApp Connect, Monitoring, Posts; admin = Monitoring, Posts, optionally WhatsApp
+if role == "client":
+    st.sidebar.page_link("pages/01_WhatsApp_Connect.py", label="WhatsApp Connect", icon="📱")
+st.sidebar.page_link("pages/02_Monitoring.py", label="Monitoring", icon="📊")
+st.sidebar.page_link("pages/03_Posts.py", label="Posts", icon="📝")
+if role == "admin":
+    st.sidebar.page_link("pages/01_WhatsApp_Connect.py", label="WhatsApp Connect", icon="📱")
 
-@st.fragment(run_every=timedelta(seconds=AUTO_REFRESH_SECONDS))
-def dashboard():
-    status_data = fetch_status()
-    qr_data = fetch_qr()
+# --- 5) Main: header + Config OK + API health + quick links ---
+st.title("Home")
+st.success("✅ Config OK — Required secrets are set.")
 
-    if status_data is None:
-        st.warning("API unreachable. Check **GNI_API_BASE_URL** and network. Retry in a moment.")
-        return
+# API health
+health_data, health_err = get_health()
+if health_err:
+    st.warning(f"⚠️ API health: {health_err}")
+else:
+    status = health_data.get("status", "ok") if isinstance(health_data, dict) else "ok"
+    st.success(f"✅ API health: **{status}**")
 
-    connected = status_data.get("connected", False)
-    last_reason = status_data.get("lastDisconnectReason")
-
-    # Status pill
-    if connected:
-        st.success("Connected ✅")
-    elif qr_data and qr_data.get("qr"):
-        st.info("Waiting for QR")
-    else:
-        st.error("Disconnected")
-
-    if last_reason:
-        st.caption(f"Last disconnect: {last_reason}")
-
-    # QR block: only when not connected and API returned a QR
-    qr_string = qr_data.get("qr") if qr_data else None
-    if not connected and qr_string:
-        try:
-            import qrcode
-            img = qrcode.make(qr_string)
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            buf.seek(0)
-            st.image(buf, caption="Scan with WhatsApp on the admin phone")
-        except Exception:
-            st.caption("QR could not be rendered.")
-        st.caption("QR expires quickly; refresh if needed.")
-    elif connected:
-        st.caption("Session active. QR hidden.")
-
-
-dashboard()
-
-if UI_PASSWORD:
-    st.divider()
-    if st.button("Lock"):
-        st.session_state.wa_ui_authenticated = False
-        st.rerun()
+# Quick links / status cards
+st.subheader("Quick links")
+cols = st.columns(3)
+with cols[0]:
+    st.page_link("pages/01_WhatsApp_Connect.py", label="WhatsApp Connect", icon="📱")
+with cols[1]:
+    st.page_link("pages/02_Monitoring.py", label="Monitoring", icon="📊")
+with cols[2]:
+    st.page_link("pages/03_Posts.py", label="Posts", icon="📝")

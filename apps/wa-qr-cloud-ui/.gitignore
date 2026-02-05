@@ -1,0 +1,4 @@
+# Secrets (local dev)
+.streamlit/secrets.toml
+.env
+*.local
