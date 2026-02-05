@@ -66,6 +66,17 @@ def validate_env(role: str = "all") -> None:
         errors.append("OLLAMA_BASE_URL is required")
 
     if role in ("api", "all"):
+        # Optional JWT_EXPIRY_SECONDS: if set and non-empty, must be valid int (1–604800)
+        raw_expiry = _get("JWT_EXPIRY_SECONDS", "86400")
+        if raw_expiry:
+            try:
+                n = int(raw_expiry)
+                if n < 1 or n > 604800:
+                    errors.append("JWT_EXPIRY_SECONDS must be between 1 and 604800")
+                    missing.append("JWT_EXPIRY_SECONDS")
+            except ValueError:
+                errors.append("JWT_EXPIRY_SECONDS must be an integer")
+                missing.append("JWT_EXPIRY_SECONDS")
         if _qr_bridge_enabled():
             token = _get("WA_QR_BRIDGE_TOKEN")
             if not token or token == "CHANGE_ME_LONG_RANDOM":
