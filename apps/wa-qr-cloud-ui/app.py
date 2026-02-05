@@ -4,6 +4,7 @@ No backend config in UI. No debug or tracebacks. All errors → short user-frien
 """
 import io
 import time
+from pathlib import Path
 import streamlit as st
 
 from src.api_base import get_api_base_url
@@ -44,6 +45,9 @@ def logout():
 
 # --- Page 1: Login ---
 if not st.session_state.get("logged_in") or not st.session_state.get("token"):
+    _logo_path = Path(__file__).resolve().parent / "logo.jpg"
+    if _logo_path.exists():
+        st.image(str(_logo_path), use_column_width=True)
     st.title("WhatsApp Connect")
     st.subheader("Log in")
     with st.form("login_form"):
@@ -72,7 +76,10 @@ if not st.session_state.get("logged_in") or not st.session_state.get("token"):
 # --- Page 2: WhatsApp Connect ---
 token = (st.session_state.get("token") or "").strip()
 
-# Sidebar: no backend config, only logout
+# Sidebar: logo, no backend config, logout
+_logo_path = Path(__file__).resolve().parent / "logo.jpg"
+if _logo_path.exists():
+    st.sidebar.image(str(_logo_path), use_column_width=True)
 st.sidebar.title("WhatsApp Connect")
 st.sidebar.caption("Logged in as **%s**" % (st.session_state.get("email") or ""))
 if st.sidebar.button("Log out"):
@@ -110,6 +117,17 @@ else:
 
 if last_reason:
     st.caption(last_reason)
+
+# WhatsApp log (same locally and on Cloud)
+with st.expander("WhatsApp log", expanded=False):
+    status_label = "Connected" if connected else ("Waiting for QR" if qr_string else "Disconnected")
+    st.text("Status: %s" % status_label)
+    if connected and isinstance(status_data, dict) and (status_data.get("phone") or status_data.get("phone_e164")):
+        st.text("Phone: %s" % (status_data.get("phone") or status_data.get("phone_e164") or ""))
+    if last_reason:
+        st.text("Last disconnect: %s" % last_reason)
+    if status_err or qr_err:
+        st.text("Note: %s" % (status_err or qr_err))
 
 if status_code == 429 or qr_code == 429:
     st.warning("Too many attempts. Please try again later.")
