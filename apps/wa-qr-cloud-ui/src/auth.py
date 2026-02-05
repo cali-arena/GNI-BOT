@@ -64,8 +64,9 @@ def login(email: str, password: str) -> bool:
     return True
 
 def logout() -> None:
+    """Clear all auth session keys (JWT + legacy). No secrets printed."""
     import streamlit as st
-    for key in ("auth_user", "auth_role", "auth_email", "auth_token"):
+    for key in ("jwt", "logged_in", "email", "auth_user", "auth_role", "auth_email", "auth_token"):
         if key in st.session_state:
             del st.session_state[key]
 

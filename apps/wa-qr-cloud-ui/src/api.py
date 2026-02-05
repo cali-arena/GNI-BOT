@@ -3,6 +3,10 @@ API wrapper: api_get / api_post with base URL and auth. Friendly errors; never l
 """
 from typing import Any, Optional
 
+# Timeouts for api_get / api_post helpers: (connect, read) in seconds
+_API_CONNECT_TIMEOUT = 5
+_API_READ_TIMEOUT = 15
+
 
 def _get_config():
     from src.config import get_config
@@ -27,14 +31,126 @@ def _base_url() -> str:
     return (_get_config().get("GNI_API_BASE_URL") or "").strip().rstrip("/")
 
 
+def api_get(path: str, jwt: Optional[str] = None) -> tuple[Optional[Any], Optional[str], Optional[int]]:
+    """
+    GET {base}{path}. Optional Authorization: Bearer <jwt>. Timeouts: connect=5s, read=15s.
+    Returns (data, error_msg, status_code). status_code is set on HTTP error (e.g. 401, 429); None otherwise.
+    On exception: shows st.warning. Never logs secrets.
+    """
+    import requests
+    import streamlit as st
+    base = _base_url()
+    if not base:
+        msg = "API base URL not set"
+        try:
+            st.warning(msg)
+        except Exception:
+            pass
+        return None, msg, None
+    url = f"{base}{path}"
+    headers = {"Content-Type": "application/json"}
+    if jwt and str(jwt).strip():
+        headers["Authorization"] = f"Bearer {jwt.strip()}"
+    try:
+        r = requests.get(url, headers=headers, timeout=(_API_CONNECT_TIMEOUT, _API_READ_TIMEOUT))
+        r.raise_for_status()
+        return (r.json() if r.content else None), None, None
+    except requests.exceptions.HTTPError as e:
+        code = e.response.status_code if e.response is not None else None
+        try:
+            detail = e.response.json().get("detail", "Request failed")
+        except Exception:
+            detail = "Request failed"
+        msg = str(detail)[:200] if detail else "Request failed"
+        if code == 401:
+            msg = "Invalid or expired token. Please log in again."
+        elif code == 429:
+            msg = "Too many attempts, wait a bit."
+        try:
+            st.warning(msg)
+        except Exception:
+            pass
+        return None, msg, code
+    except requests.exceptions.Timeout:
+        msg = "Request timed out."
+        try:
+            st.warning(msg)
+        except Exception:
+            pass
+        return None, msg, None
+    except Exception:
+        msg = "Connection error."
+        try:
+            st.warning(msg)
+        except Exception:
+            pass
+        return None, msg, None
+
+
+def api_post(path: str, json: Optional[dict] = None, jwt: Optional[str] = None) -> tuple[Optional[Any], Optional[str], Optional[int]]:
+    """
+    POST {base}{path} with optional json body. Optional Authorization: Bearer <jwt>.
+    Returns (data, error_msg, status_code). status_code set on HTTP error; None otherwise.
+    Timeouts: connect=5s, read=15s. Never logs secrets.
+    """
+    import requests
+    import streamlit as st
+    base = _base_url()
+    if not base:
+        msg = "API base URL not set"
+        try:
+            st.warning(msg)
+        except Exception:
+            pass
+        return None, msg, None
+    url = f"{base}{path}"
+    headers = {"Content-Type": "application/json"}
+    if jwt and str(jwt).strip():
+        headers["Authorization"] = f"Bearer {jwt.strip()}"
+    try:
+        r = requests.post(url, headers=headers, json=json or {}, timeout=(_API_CONNECT_TIMEOUT, _API_READ_TIMEOUT))
+        r.raise_for_status()
+        return (r.json() if r.content else {}), None, None
+    except requests.exceptions.HTTPError as e:
+        code = e.response.status_code if e.response is not None else None
+        try:
+            detail = e.response.json().get("detail", "Request failed")
+        except Exception:
+            detail = "Request failed"
+        msg = str(detail)[:200] if detail else "Request failed"
+        if code == 401:
+            msg = "Invalid or expired token. Please log in again."
+        elif code == 429:
+            msg = "Too many attempts, wait a bit."
+        try:
+            st.warning(msg)
+        except Exception:
+            pass
+        return None, msg, code
+    except requests.exceptions.Timeout:
+        msg = "Request timed out."
+        try:
+            st.warning(msg)
+        except Exception:
+            pass
+        return None, msg, None
+    except Exception:
+        msg = "Connection error."
+        try:
+            st.warning(msg)
+        except Exception:
+            pass
+        return None, msg, None
+
+
 def _headers_jwt(token: Optional[str] = None) -> dict:
-    """Headers with JWT from session (for /auth/me, /whatsapp/*)."""
+    """Headers with JWT from session (for /auth/me, /whatsapp/*). Uses session_state jwt or auth_token."""
     h = {"Content-Type": "application/json"}
     t = (token or "").strip()
     if not t:
         try:
             import streamlit as st
-            t = (st.session_state.get("auth_token") or "").strip()
+            t = (st.session_state.get("jwt") or st.session_state.get("auth_token") or "").strip()
         except Exception:
             pass
     if t:
@@ -96,8 +212,8 @@ def api_post_jwt(path: str, json_body: Optional[dict] = None, *, timeout: int = 
         return None, "Connection error."
 
 
-def api_get(path: str, *, timeout: int = 10, use_bearer: bool = True) -> tuple[Optional[Any], Optional[str]]:
-    """GET {base}{path}. Returns (data, error). On non-200 returns friendly error (no secrets)."""
+def _api_get_legacy(path: str, *, timeout: int = 10, use_bearer: bool = True) -> tuple[Optional[Any], Optional[str]]:
+    """GET with config-based bearer or API key. Used by get_wa_status, get_wa_qr, monitoring, posts."""
     import requests
     base = _base_url()
     if not base:
@@ -123,8 +239,8 @@ def api_get(path: str, *, timeout: int = 10, use_bearer: bool = True) -> tuple[O
         return None, "Connection error."
 
 
-def api_post(path: str, json_body: Optional[dict] = None, *, timeout: int = 10, use_bearer: bool = False) -> tuple[Optional[Any], Optional[str]]:
-    """POST {base}{path}. Returns (data, error). use_bearer=True for WA bridge; False for API key (monitoring/posts)."""
+def _api_post_legacy(path: str, json_body: Optional[dict] = None, *, timeout: int = 10, use_bearer: bool = False) -> tuple[Optional[Any], Optional[str]]:
+    """POST with config-based auth. Used by monitoring run, approve, reject."""
     import requests
     base = _base_url()
     if not base:
@@ -152,15 +268,16 @@ def api_post(path: str, json_body: Optional[dict] = None, *, timeout: int = 10, 
 
 # --- Convenience (used by pages) ---
 def get_health() -> tuple[Optional[dict], Optional[str]]:
-    return api_get("/health", use_bearer=False)
+    data, err, _ = api_get("/health")
+    return data, err
 
 
 def get_wa_status() -> tuple[Optional[dict], Optional[str]]:
-    return api_get("/admin/wa/status", use_bearer=True)
+    return _api_get_legacy("/admin/wa/status", use_bearer=True)
 
 
 def get_wa_qr() -> tuple[Optional[dict], Optional[str]]:
-    return api_get("/admin/wa/qr", use_bearer=True)
+    return _api_get_legacy("/admin/wa/qr", use_bearer=True)
 
 
 # --- JWT / per-user WhatsApp (use these when auth_token is in session) ---
@@ -209,7 +326,7 @@ def get_monitoring_status(tenant: Optional[str] = None) -> tuple[Optional[dict],
     path = "/monitoring/status"
     if tenant:
         path += "?" + __import__("urllib.parse").urlencode({"tenant": tenant})
-    return api_get(path, use_bearer=False)
+    return _api_get_legacy(path, use_bearer=False)
 
 
 def get_monitoring_recent(limit: int = 20, tenant: Optional[str] = None) -> tuple[Optional[list], Optional[str]]:
@@ -217,7 +334,7 @@ def get_monitoring_recent(limit: int = 20, tenant: Optional[str] = None) -> tupl
     if tenant:
         params["tenant"] = tenant
     path = "/monitoring/recent?" + __import__("urllib.parse").urlencode(params)
-    data, err = api_get(path, use_bearer=False)
+    data, err = _api_get_legacy(path, use_bearer=False)
     if err:
         return None, err
     if isinstance(data, list):
@@ -228,18 +345,18 @@ def get_monitoring_recent(limit: int = 20, tenant: Optional[str] = None) -> tupl
 
 
 def post_monitoring_run(tenant: Optional[str] = None) -> tuple[Optional[dict], Optional[str]]:
-    return api_post("/monitoring/run", json_body={"tenant": tenant} if tenant else None, use_bearer=False)
+    return _api_post_legacy("/monitoring/run", json_body={"tenant": tenant} if tenant else None, use_bearer=False)
 
 
 def get_posts(status: str = "pending", limit: int = 20, tenant: Optional[str] = None) -> tuple[Optional[list], Optional[str]]:
     if status == "pending":
-        data, err = api_get("/review/pending", use_bearer=False)
+        data, err = _api_get_legacy("/review/pending", use_bearer=False)
     else:
         params = {"status": status, "limit": limit}
         if tenant:
             params["tenant"] = tenant
         path = "/posts?" + __import__("urllib.parse").urlencode(params)
-        data, err = api_get(path, use_bearer=False)
+        data, err = _api_get_legacy(path, use_bearer=False)
     if err:
         return None, err
     if isinstance(data, list):
@@ -250,8 +367,8 @@ def get_posts(status: str = "pending", limit: int = 20, tenant: Optional[str] = 
 
 
 def post_approve(post_id: int) -> tuple[Optional[dict], Optional[str]]:
-    return api_post(f"/review/{post_id}/approve", use_bearer=False)
+    return _api_post_legacy(f"/review/{post_id}/approve", use_bearer=False)
 
 
 def post_reject(post_id: int) -> tuple[Optional[dict], Optional[str]]:
-    return api_post(f"/review/{post_id}/reject", use_bearer=False)
+    return _api_post_legacy(f"/review/{post_id}/reject", use_bearer=False)
