@@ -14,8 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
-from db import get_db_dependency
-from db.models import EventsLog, User, WhatsAppSession
+from apps.api.db import get_db_dependency
+from apps.api.db.models import EventsLog, User, WhatsAppSession
 from schemas import SendGroupIn
 
 from wa_rate_limit import check_wa_connect, check_wa_qr, check_wa_send, check_wa_status

@@ -4,8 +4,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from db import check_db, get_db_dependency
-from db.models import Draft, EventsLog, Item, Publication
+from apps.api.db import check_db, get_db_dependency
+from apps.api.db.models import Draft, EventsLog, Item, Publication
 from schemas import (
     DependencyStatus,
     FailureEventOut,

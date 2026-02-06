@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from db import check_db
+from apps.api.db import check_db
 
 router = APIRouter(tags=["health"])
 

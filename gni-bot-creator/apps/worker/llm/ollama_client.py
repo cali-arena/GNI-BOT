@@ -29,10 +29,11 @@ from .prompts import (
     generate_prompt,
     get_generate_system,
 )
+from apps.shared.env_helpers import env_float, env_int
 from .schemas import ClassifyResult, GenerateResult, validate_generate_payload
 
-OLLAMA_REQUEST_TIMEOUT = float(os.environ.get("OLLAMA_REQUEST_TIMEOUT", "120.0"))
-MAX_JSON_RETRY = int(os.environ.get("OLLAMA_MAX_JSON_RETRY", "1"))
+OLLAMA_REQUEST_TIMEOUT = env_float("OLLAMA_REQUEST_TIMEOUT", 120.0, min_value=0.0)
+MAX_JSON_RETRY = env_int("OLLAMA_MAX_JSON_RETRY", 1, min_value=0)
 OLLAMA_MODE = (os.environ.get("OLLAMA_MODE", "native") or "native").lower()
 OLLAMA_BASE_URL_DEFAULT = "http://ollama:11434"
 

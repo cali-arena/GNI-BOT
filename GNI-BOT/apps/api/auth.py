@@ -109,7 +109,7 @@ def _get_current_user_impl(
     credentials: Optional[HTTPAuthorizationCredentials],
     session: Session,
 ) -> "User":
-    from db.models import User
+    from apps.api.db.models import User
 
     if not credentials or not credentials.credentials:
         raise HTTPException(status_code=401, detail="Missing Authorization header")

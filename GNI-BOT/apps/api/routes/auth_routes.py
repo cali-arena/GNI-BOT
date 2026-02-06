@@ -13,8 +13,8 @@ from auth import (
     hash_password,
     verify_password,
 )
-from db import get_db_dependency
-from db.models import User
+from apps.api.db import get_db_dependency
+from apps.api.db.models import User
 from schemas import LoginIn, RegisterIn, TokenOut
 
 router = APIRouter(prefix="/auth", tags=["auth"])

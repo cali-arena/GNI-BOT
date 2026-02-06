@@ -6,7 +6,7 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
-from db.models import Settings
+from apps.api.db.models import Settings
 
 
 def get_settings(session: Session) -> dict[str, Any]:

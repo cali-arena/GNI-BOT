@@ -3,14 +3,15 @@ Shared exponential backoff retry helper for publish (Telegram and Make).
 Max attempts configurable via PUBLISH_MAX_ATTEMPTS env (default 3).
 CircuitOpenError: no retry (circuit open, service unavailable).
 """
-import os
 import time
 from typing import Callable, TypeVar
 
+from apps.shared.env_helpers import env_float, env_int
+
 T = TypeVar("T")
 
-PUBLISH_MAX_ATTEMPTS = int(os.environ.get("PUBLISH_MAX_ATTEMPTS") or "3")
-BACKOFF_BASE = float(os.environ.get("PUBLISH_BACKOFF_BASE") or "1.0")
+PUBLISH_MAX_ATTEMPTS = env_int("PUBLISH_MAX_ATTEMPTS", 3, min_value=1)
+BACKOFF_BASE = env_float("PUBLISH_BACKOFF_BASE", 1.0, min_value=0.0)
 
 # Import for "no retry" check; avoid circular import
 def _is_circuit_open(e: Exception) -> bool:

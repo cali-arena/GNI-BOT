@@ -10,15 +10,16 @@ from typing import Optional
 
 import httpx
 
+from apps.shared.env_helpers import env_int
 from apps.worker.llm.ollama_client import OLLAMA_BASE_URL_DEFAULT
 
 logger = logging.getLogger(__name__)
 
 OLLAMA_MODEL_DEFAULT = "qwen2.5:7b"
-PULL_ON_START = os.environ.get("OLLAMA_PULL_ON_START", "true").strip().lower() in ("1", "true", "yes")
-PULL_TIMEOUT = int(os.environ.get("OLLAMA_PULL_TIMEOUT_SECONDS", "1800"))
-PULL_MAX_RETRIES = int(os.environ.get("OLLAMA_PULL_MAX_RETRIES", "6"))
-PULL_BACKOFF = int(os.environ.get("OLLAMA_PULL_BACKOFF_SECONDS", "20"))
+PULL_ON_START = (os.environ.get("OLLAMA_PULL_ON_START", "true") or "true").strip().lower() in ("1", "true", "yes")
+PULL_TIMEOUT = env_int("OLLAMA_PULL_TIMEOUT_SECONDS", 1800, min_value=1)
+PULL_MAX_RETRIES = env_int("OLLAMA_PULL_MAX_RETRIES", 6, min_value=1)
+PULL_BACKOFF = env_int("OLLAMA_PULL_BACKOFF_SECONDS", 20, min_value=1)
 PROGRESS_LOG_INTERVAL = 20
 
 

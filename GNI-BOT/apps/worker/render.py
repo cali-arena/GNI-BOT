@@ -2,11 +2,12 @@
 Render exact Portuguese templates: Template A (Análise de Inteligência), Template B (Flash Setorial).
 Message splitting for WhatsApp when text exceeds WHATSAPP_MAX_CHARS (default 3500).
 """
-import os
 from typing import Any, Optional
 
+from apps.shared.env_helpers import env_int
+
 # WhatsApp-safe: configurable max chars (default 3500)
-WHATSAPP_MAX_CHARS = int(os.environ.get("WHATSAPP_MAX_CHARS", "3500"))
+WHATSAPP_MAX_CHARS = env_int("WHATSAPP_MAX_CHARS", 3500, min_value=1)
 
 HEADER_INTEL = "🚨 GNI — Análise de Inteligência"
 HEADER_FLASH_PREFIX = "🚨 GNI |"

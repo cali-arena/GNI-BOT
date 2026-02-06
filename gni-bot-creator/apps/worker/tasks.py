@@ -21,6 +21,38 @@ _repo = Path(__file__).resolve().parent.parent.parent
 if str(_repo) not in sys.path:
     sys.path.insert(0, str(_repo))
 
+from apps.shared.env_helpers import env_int
+
+
+def validate_worker_env() -> None:
+    """Trigger worker env parsing at startup. Raise ValueError if any required env is invalid."""
+    from apps.worker import cache
+    _ = cache.CACHE_TTL_SECONDS
+    from apps.worker import retry
+    _ = (retry.PUBLISH_MAX_ATTEMPTS, retry.BACKOFF_BASE)
+    from apps.worker import circuit_breaker
+    _ = (circuit_breaker.FAILURE_THRESHOLD, circuit_breaker.RECOVERY_TIMEOUT)
+    from apps.worker import render
+    _ = render.WHATSAPP_MAX_CHARS
+    from apps.worker import dedupe
+    _ = dedupe.DEDUPE_DAYS
+    from apps.worker.llm import ollama_ensure
+    _ = (ollama_ensure.PULL_TIMEOUT, ollama_ensure.PULL_MAX_RETRIES, ollama_ensure.PULL_BACKOFF)
+    from apps.worker.llm import ollama_client
+    _ = (ollama_client.OLLAMA_REQUEST_TIMEOUT, ollama_client.MAX_JSON_RETRY)
+    env_int("RUN_EVERY_MINUTES", 15, min_value=1)
+    env_int("TELEGRAM_SINCE_MINUTES", 60, min_value=1)
+    env_int("PUBLISH_MAX_WORKERS", 4, min_value=1)
+    env_int("MAX_PIPELINE_ATTEMPTS", 3, min_value=1)
+
+
+if __name__ == "__main__":
+    try:
+        validate_worker_env()
+    except ValueError as e:
+        print("Worker environment validation failed:", e, file=sys.stderr)
+        sys.exit(1)
+
 from sqlalchemy import func
 
 from apps.api.db import SessionLocal, init_db
@@ -62,10 +94,10 @@ def _log_info(msg: str, **kw: Any) -> None:
         print(f"{msg} {kw}" if kw else msg)
 
 
-RUN_EVERY_MINUTES = int(os.environ.get("RUN_EVERY_MINUTES", "15"))
-TELEGRAM_SINCE_MINUTES = int(os.environ.get("TELEGRAM_SINCE_MINUTES", "60"))
-PUBLISH_MAX_WORKERS = int(os.environ.get("PUBLISH_MAX_WORKERS", "4"))
-MAX_PIPELINE_ATTEMPTS = int(os.environ.get("MAX_PIPELINE_ATTEMPTS", "3"))
+RUN_EVERY_MINUTES = env_int("RUN_EVERY_MINUTES", 15, min_value=1)
+TELEGRAM_SINCE_MINUTES = env_int("TELEGRAM_SINCE_MINUTES", 60, min_value=1)
+PUBLISH_MAX_WORKERS = env_int("PUBLISH_MAX_WORKERS", 4, min_value=1)
+MAX_PIPELINE_ATTEMPTS = env_int("MAX_PIPELINE_ATTEMPTS", 3, min_value=1)
 DRY_RUN = os.environ.get("DRY_RUN", "").lower() in ("1", "true", "yes")
 
 # Serialize rate limit check to avoid Redis race; each worker acquires before check+increment

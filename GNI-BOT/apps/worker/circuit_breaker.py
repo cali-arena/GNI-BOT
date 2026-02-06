@@ -4,17 +4,18 @@ Prevents cascading failures; opens after repeated failures; recovers automatical
 """
 from __future__ import annotations
 
-import os
 import threading
 import time
 from enum import Enum
 from typing import Callable, TypeVar
 
+from apps.shared.env_helpers import env_float, env_int
+
 T = TypeVar("T")
 
 # Config
-FAILURE_THRESHOLD = int(os.environ.get("CIRCUIT_FAILURE_THRESHOLD", "5"))
-RECOVERY_TIMEOUT = float(os.environ.get("CIRCUIT_RECOVERY_TIMEOUT", "60.0"))
+FAILURE_THRESHOLD = env_int("CIRCUIT_FAILURE_THRESHOLD", 5, min_value=1)
+RECOVERY_TIMEOUT = env_float("CIRCUIT_RECOVERY_TIMEOUT", 60.0, min_value=0.0)
 
 
 class CircuitState(str, Enum):

@@ -4,7 +4,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from auth import require_auth
-from db import init_db
+from apps.api.db import init_db
 from middleware import RateLimitMiddleware, RequestIdMiddleware, RequestSizeLimitMiddleware
 from routes.admin import router as admin_router
 from routes.auth_routes import router as auth_router

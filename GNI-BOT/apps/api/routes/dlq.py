@@ -5,8 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from db import get_db_dependency
-from db.models import DeadLetterQueue as DLQ, Item
+from apps.api.db import get_db_dependency
+from apps.api.db.models import DeadLetterQueue as DLQ, Item
 
 router = APIRouter(prefix="/dlq", tags=["dlq"])
 
