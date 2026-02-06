@@ -1,0 +1,38 @@
+# ============================================================
+# Copy-paste these commands on your VM (e.g. Contabo root@vmi...)
+# Run line by line or paste the block (without these comment lines)
+# ============================================================
+
+# 1) Go to app directory (use /opt/gni if you cloned GNI-BOT there)
+cd /opt/gni
+
+# 2) If you use git and already cloned, pull latest
+git pull origin main
+
+# 3) Ensure whatsapp-bot exists for build (compose expects ../apps/whatsapp-bot)
+#    If you deployed with deploy_vm.sh, it's at /opt/apps/whatsapp-bot and we symlink or clone
+mkdir -p /opt/apps
+if [ ! -d /opt/apps/whatsapp-bot ]; then
+  echo "Clone whatsapp-bot to /opt/apps/whatsapp-bot or run deploy_vm.sh from your machine"
+fi
+
+# 4) Create .env from example if missing
+test -f .env || cp .env.example .env
+
+# 5) Build and start all services (postgres, redis, ollama, api, worker, whatsapp-bot)
+docker compose build
+docker compose up -d
+
+# 6) Optional: also run Streamlit QR UI on the VM (port 8501)
+docker compose --profile qr-ui up -d
+
+# 7) Check everything is up
+docker compose ps
+
+# 8) Optional: enable systemd so stack restarts on reboot
+APP_DIR=/opt/gni sudo bash scripts/install_systemd.sh
+
+# --- Useful later ---
+# Logs:    docker compose logs -f whatsapp-bot
+# Restart: docker compose up -d --build
+# QR UI:   http://YOUR_VM_IP:8501   (if you ran step 6)

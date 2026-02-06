@@ -1,0 +1,40 @@
+# GNI Bot Creator — single source of truth for dependencies
+# Install: pip install -r requirements.txt
+
+# API (pinned)
+fastapi>=0.115.0,<0.116
+uvicorn[standard]>=0.32.0,<0.33
+
+# DB (pinned)
+sqlalchemy>=2.0.0,<3.0
+psycopg2-binary>=2.9.0,<2.10
+
+# Auth
+pyjwt>=2.10.0,<2.11
+passlib[bcrypt]>=1.7.4
+
+# Redis (pinned)
+redis>=5.2.0,<5.3
+
+# HTTP client (pinned)
+httpx>=0.28.0,<0.29
+
+# Validation & schemas (pinned)
+pydantic>=2.10.0,<2.11
+
+# Ingest (pinned)
+feedparser>=6.0.0,<7.0
+pyyaml>=6.0.0,<7.0
+telethon>=1.36.0,<1.37
+# Optional: rapidfuzz for DEDUPE_POLICY=relaxed (title similarity)
+# rapidfuzz>=3.0.0
+
+# Migrations
+alembic>=1.14.0,<1.15
+
+# Observability
+structlog>=24.0.0
+prometheus-client>=0.21.0
+opentelemetry-api>=1.28.0
+opentelemetry-sdk>=1.28.0
+opentelemetry-exporter-otlp-proto-http>=1.28.0

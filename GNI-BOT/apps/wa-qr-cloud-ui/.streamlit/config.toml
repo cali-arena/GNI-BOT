@@ -1,0 +1,32 @@
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+primaryColor = "#4A90D9"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#262730"
+font = "sans serif"
+
+# Full sidebar theme; include frontend keys to silence "Invalid color passed" warnings
+[theme.sidebar]
+primaryColor = "#4A90D9"
+backgroundColor = "#F0F2F6"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#262730"
+linkColor = "#4A90D9"
+codeTextColor = "#262730"
+codeBackgroundColor = "#E8ECF1"
+borderColor = "#E0E5EB"
+dataframeBorderColor = "#E0E5EB"
+dataframeHeaderBackgroundColor = "#E8ECF1"
+showWidgetBorder = true
+# Keys the Streamlit frontend validates (avoid empty string warnings)
+widgetBackgroundColor = "#FFFFFF"
+widgetBorderColor = "#E0E5EB"
+skeletonBackgroundColor = "#E8ECF1"

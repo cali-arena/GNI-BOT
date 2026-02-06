@@ -1,0 +1,6 @@
+# Streamlit Cloud / local run for apps/wa-qr-cloud-ui
+# Use this as "Requirements file" in Streamlit Cloud when main file is streamlit_app.py
+streamlit>=1.32
+requests>=2.31
+qrcode[pil]>=7.4
+pillow>=10.0

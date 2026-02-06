@@ -1,0 +1,34 @@
+# Keyword-based impact/risk and template rules for scoring.
+# Source tiers map source names to tier (1=highest, 3=lowest).
+
+# risk=high + template=ANALISE_INTEL when any of these appear in title/summary
+rumor_intel:
+  - rumor
+  - rumours
+  - unconfirmed
+  - allegedly
+  - alleged
+
+# template=FLASH_SETORIAL when any of these appear
+flash_editorial:
+  - announcement
+  - launch
+  - partnership
+  - capability
+  - unveiled
+  - released
+
+# Source tier: 1 = P0 bias, 2 = P1, 3 = P2 (combined with keyword impact)
+source_tiers:
+  tier1:
+    - CoinDesk
+    - Cointelegraph
+    - Reuters Markets
+    - Bloomberg Markets
+    - Financial Times
+  tier2:
+    - The Block
+    - Bitcoinist
+    - CNBC Finance
+  tier3:
+    - Reddit r/CryptoCurrency

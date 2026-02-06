@@ -1,0 +1,26 @@
+# RSS sources. URLs can use env placeholders (e.g. ${CNBC_RSS_URL_PLACEHOLDER}).
+# Document placeholders in .env.example.
+
+crypto:
+  - name: CoinDesk
+    url: https://www.coindesk.com/arc/outboundfeeds/rss/
+  - name: Cointelegraph
+    url: https://cointelegraph.com/rss
+  - name: The Block
+    url: https://www.theblock.co/rss.xml
+  - name: Bitcoinist
+    url: https://bitcoinist.com/feed
+
+macro:
+  - name: Reuters Markets
+    url: https://www.reuters.com/my-news/feed/
+  - name: Bloomberg Markets
+    url: https://feeds.bloomberg.com/markets/news.rss
+  - name: Financial Times
+    url: https://www.ft.com/?format=rss
+  - name: CNBC Finance
+    url: ${CNBC_RSS_URL_PLACEHOLDER}
+
+social:
+  - name: Reddit r/CryptoCurrency
+    url: https://www.reddit.com/r/CryptoCurrency/.rss
