@@ -8,8 +8,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from src.auth import require_login
-from src.api import post_wa_connect, get_wa_qr_user, get_wa_status_user
+from src.api import get_wa_qr, get_wa_status
 from src.ui import inject_app_css, render_sidebar
 
 st.set_page_config(page_title="GNI — WhatsApp Connect", layout="centered", initial_sidebar_state="expanded")
@@ -17,11 +16,8 @@ base = (st.session_state.get("api_base_url") or "").strip().rstrip("/")
 if not base:
     st.warning("Backend URL not set. Go to Home to set it.")
     st.switch_page("app.py")
-
-require_login()
 inject_app_css()
-role = (st.session_state.get("auth_role") or "client").strip().lower()
-render_sidebar(role, "whatsapp", api_base_url=base, user_email=st.session_state.get("auth_email") or "")
+render_sidebar("client", "whatsapp", api_base_url=base, user_email="")
 
 # Centered logo + title + subtitle at top
 _logo = Path(__file__).parent.parent / "assets" / "whatsapp-logo.webp"
@@ -32,8 +28,9 @@ with _col2:
     st.title("WhatsApp Connect")
     st.markdown('<p class="subtitle-muted">Link your WhatsApp account to send and receive messages.</p>', unsafe_allow_html=True)
 
-status_data, status_err = get_wa_status_user()
-qr_data, qr_err = get_wa_qr_user()
+# Uses /admin/wa/status and /admin/wa/qr with WA_QR_BRIDGE_TOKEN (set in Streamlit secrets)
+status_data, status_err = get_wa_status()
+qr_data, qr_err = get_wa_qr()
 
 connected = False
 qr_string = None
@@ -74,13 +71,7 @@ for i, step in enumerate(steps, 1):
     st.markdown("%d. %s" % (i, step))
 
 if st.button("Connect WhatsApp", key="wa_connect"):
-    with st.spinner("Starting session…"):
-        _, err = post_wa_connect()
-        if err:
-            st.error(err)
-        else:
-            st.success("Session started. Fetching QR…")
-            st.rerun()
+    st.rerun()
 
 if not connected and qr_string:
     try:
@@ -97,13 +88,7 @@ elif connected:
     st.caption("Session active. QR hidden.")
 
 if st.button("Reconnect", key="wa_reconnect"):
-    with st.spinner("Reconnecting…"):
-        _, err = post_wa_connect()
-        if err:
-            st.error(err)
-        else:
-            st.success("Reconnect started.")
-            st.rerun()
+    st.rerun()
 
 with st.expander("FAQ"):
     st.markdown("**Why do I need this?**")
