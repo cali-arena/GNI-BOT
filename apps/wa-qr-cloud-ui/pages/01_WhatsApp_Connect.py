@@ -22,6 +22,10 @@ if "wa_qr_string" not in st.session_state:
     st.session_state.wa_qr_string = None
 if "wa_polling" not in st.session_state:
     st.session_state.wa_polling = False
+if "wa_poll_count" not in st.session_state:
+    st.session_state.wa_poll_count = 0
+if "wa_poll_failed" not in st.session_state:
+    st.session_state.wa_poll_failed = False
 
 # Centered logo + title + subtitle at top
 _logo = Path(__file__).parent.parent / "assets" / "whatsapp-logo.webp"
@@ -58,6 +62,8 @@ st.subheader("How to connect")
 for i, step in enumerate(["Open WhatsApp on your phone", "Settings → Linked Devices", "Link a Device", "Scan the QR code below"], 1):
     st.markdown("%d. %s" % (i, step))
 
+MAX_POLL = 20  # ~40 seconds max wait for QR
+
 # Connect WhatsApp: trigger reconnect, then poll for QR
 if st.button("Connect WhatsApp", key="wa_connect"):
     with st.spinner("Generating QR code…"):
@@ -67,6 +73,8 @@ if st.button("Connect WhatsApp", key="wa_connect"):
         else:
             st.session_state.wa_qr_string = None
             st.session_state.wa_polling = True
+            st.session_state.wa_poll_count = 0
+            st.session_state.wa_poll_failed = False
     st.rerun()
 
 # Reconnect: same as Connect — new QR on demand
@@ -78,23 +86,35 @@ if st.button("Reconnect", key="wa_reconnect"):
         else:
             st.session_state.wa_qr_string = None
             st.session_state.wa_polling = True
+            st.session_state.wa_poll_count = 0
+            st.session_state.wa_poll_failed = False
     st.rerun()
 
 # Poll for QR when waiting
 if st.session_state.wa_polling and not connected:
-    qr_data, qr_err = get_wa_qr()
-    if isinstance(qr_data, dict) and qr_data.get("qr"):
-        st.session_state.wa_qr_string = qr_data.get("qr")
+    st.session_state.wa_poll_count = st.session_state.wa_poll_count + 1
+    if st.session_state.wa_poll_count > MAX_POLL:
         st.session_state.wa_polling = False
-    elif qr_err:
-        st.session_state.wa_polling = False
-        st.error(qr_err)
-    else:
-        time.sleep(2)
+        st.session_state.wa_poll_failed = True
         st.rerun()
+    else:
+        st.caption("⏳ Waiting for QR… (%d/%d)" % (st.session_state.wa_poll_count, MAX_POLL))
+        qr_data, qr_err = get_wa_qr()
+        if isinstance(qr_data, dict) and qr_data.get("qr"):
+            st.session_state.wa_qr_string = qr_data.get("qr")
+            st.session_state.wa_polling = False
+        elif qr_err:
+            st.session_state.wa_polling = False
+            st.error(qr_err)
+        else:
+            time.sleep(2)
+            st.rerun()
+
+if st.session_state.wa_poll_failed:
+    st.warning("QR didn't appear in time. Click **Reconnect** to try again.")
 
 # Also fetch current QR if not polling (e.g. page refresh while bot has QR)
-if not connected and not st.session_state.wa_qr_string and not st.session_state.wa_polling:
+if not connected and not st.session_state.wa_qr_string and not st.session_state.wa_polling and not st.session_state.wa_poll_failed:
     qr_data, _ = get_wa_qr()
     if isinstance(qr_data, dict) and qr_data.get("qr"):
         st.session_state.wa_qr_string = qr_data.get("qr")
