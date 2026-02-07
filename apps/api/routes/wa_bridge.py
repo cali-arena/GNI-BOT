@@ -128,3 +128,23 @@ async def wa_qr(request: Request) -> dict:
         "expires_in": expires_in,
         "server_time": now,
     }
+
+
+@router.post("/reconnect")
+async def wa_reconnect() -> dict:
+    """
+    Trigger whatsapp-bot to logout and reconnect, generating a new QR.
+    Call this before GET /qr to get a fresh QR on demand.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.post(f"{WA_BOT_BASE_URL}/reconnect")
+            r.raise_for_status()
+            return r.json()
+    except httpx.TimeoutException:
+        logger.warning("wa_bridge: whatsapp-bot reconnect timeout")
+        return {"ok": False, "error": "timeout", "server_time": now}
+    except Exception as e:
+        logger.warning("wa_bridge: whatsapp-bot reconnect error: %s", type(e).__name__)
+        return {"ok": False, "error": str(e)[:100], "server_time": now}

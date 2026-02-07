@@ -219,8 +219,13 @@ def get_wa_status() -> tuple[Optional[dict], Optional[str]]:
 
 
 def get_wa_qr() -> tuple[Optional[dict], Optional[str]]:
-    """Legacy: GET /admin/wa/qr with WA_QR_BRIDGE_TOKEN."""
+    """GET /admin/wa/qr with WA_QR_BRIDGE_TOKEN."""
     return api_get("/admin/wa/qr", use_bearer=True)
+
+
+def post_wa_reconnect() -> tuple[Optional[dict], Optional[str]]:
+    """POST /admin/wa/reconnect — trigger new QR generation. Returns (body, error)."""
+    return api_post("/admin/wa/reconnect", json_body={}, use_bearer=True)
 
 
 def get_monitoring_status(tenant: Optional[str] = None) -> tuple[Optional[dict], Optional[str]]:
