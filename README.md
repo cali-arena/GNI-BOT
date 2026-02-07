@@ -371,7 +371,9 @@ The **WhatsApp bot** (`whatsapp-bot`) runs on the internal network and is not ex
 
 - `WA_BOT_BASE_URL` — Internal URL of whatsapp-bot (default: `http://whatsapp-bot:3100`).
 - `WA_QR_BRIDGE_TOKEN` — **Required.** Long random secret; used as Bearer token for bridge endpoints. Generate e.g. with `openssl rand -hex 32`.
-- `WA_QR_TTL_SECONDS` — How long the QR payload is considered valid (default: 60).
+- `WA_QR_TTL_SECONDS` — Redis cache TTL for QR (default: 120).
+- `WA_KEEPALIVE_INTERVAL_SECONDS` — Background keepalive interval (default: 25).
+- `WA_RECONNECT_BACKOFF_SECONDS` — Backoff after keepalive errors (default: 30).
 - `WA_QR_RATE_LIMIT_PER_MINUTE` — Per-IP rate limit for `/admin/wa/qr` (default: 20).
 - `STREAMLIT_ORIGIN` — Optional. If set (e.g. `https://yourapp.streamlit.app`), this origin is added to CORS so the Streamlit app can call the API.
 
@@ -380,7 +382,7 @@ The **WhatsApp bot** (`whatsapp-bot`) runs on the internal network and is not ex
 All bridge endpoints require: `Authorization: Bearer <WA_QR_BRIDGE_TOKEN>`. Missing or invalid token returns **401**.
 
 - **`GET /admin/wa/status`** — Proxies to whatsapp-bot `/health`. Returns `connected`, `status`, `lastDisconnectReason`, `server_time` (ISO8601).
-- **`GET /admin/wa/qr`** — Proxies to whatsapp-bot `/qr`. Returns `qr` (string or `null` when already connected), `expires_in` (seconds), `server_time`. Rate limited per IP. QR is short-lived; do not cache indefinitely.
+- **`GET /admin/wa/qr`** — Returns `qr` (string or `null`), `status` (`qr_ready` or `not_ready`), `ts` (unix timestamp). Reads from Redis first; on miss, proxies to whatsapp-bot and caches. Public aliases: `GET /wa/qr`, `POST /wa/connect` (same as reconnect).
 
 ### Example (do not log or commit the token)
 
@@ -391,6 +393,21 @@ curl -s -H "Authorization: Bearer $WA_QR_BRIDGE_TOKEN" "https://your-api.example
 ```
 
 If `WA_QR_BRIDGE_TOKEN` is not set, bridge endpoints return **503** (bridge not configured). The raw QR string is never logged by the API.
+
+### WhatsApp QR: How it works (24/7 robust)
+
+1. **Redis persistence**: When the bridge receives a QR from the bot (via GET /wa/qr or keepalive), it caches it in Redis (`wa:last_qr`, `wa:last_qr_ts`) with TTL `WA_QR_TTL_SECONDS` (default 120s).
+2. **Read path**: GET /wa/qr (and /admin/wa/qr) reads Redis first; on hit returns `{ "qr": "<string>", "status": "qr_ready", "ts": <unix> }`. On miss, proxies to the bot, caches on success, returns `{ "qr": null, "status": "not_ready" }` otherwise.
+3. **Background keepalive**: The API runs a background task (every `WA_KEEPALIVE_INTERVAL_SECONDS`) that checks connection status. If disconnected, it triggers reconnect, polls the bot for QR, and caches it in Redis. On errors it backs off (`WA_RECONNECT_BACKOFF_SECONDS` + jitter) and continues.
+4. **Streamlit UI**: After Connect/Reconnect, polls the QR endpoint for up to 90s with progressive intervals (5/10/15s). Renders QR with qrcode lib; on timeout shows "Bridge is reconnecting; try Refresh QR in 10s".
+
+**Commands to run 24/7 on VM:**
+```bash
+docker compose up -d
+docker compose logs -f api    # or worker, if applicable
+curl -s -H "Authorization: Bearer $WA_QR_BRIDGE_TOKEN" http://127.0.0.1:8000/wa/status
+./scripts/verify_wa_flow.sh   # Verify full flow (status → connect → poll QR)
+```
 
 ## Resilience (circuit breaker + retry)
 

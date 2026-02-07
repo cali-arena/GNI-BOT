@@ -16,7 +16,15 @@ GNI_API_BASE_URL = "https://your-api.example.com"
 
 3. **Save** and **Reboot**. Users log in with their API account (email/password); JWT in session; they see only their own WhatsApp QR/status.
 
-**Optional:** `SEED_CLIENT_EMAIL` / `SEED_CLIENT_PASSWORD` (legacy fallback), `SEED_CLIENT_ROLE`, `API_KEY`, `AUTO_REFRESH_SECONDS`. Do **not** set `WA_QR_BRIDGE_TOKEN`; auth is JWT-only.
+**Optional:** `SEED_CLIENT_EMAIL` / `SEED_CLIENT_PASSWORD` (legacy fallback), `SEED_CLIENT_ROLE`, `API_KEY`, `AUTO_REFRESH_SECONDS`.
+
+**WhatsApp Connect** (when using bridge token auth):
+```toml
+GNI_API_BASE_URL = "http://217.216.84.81:8000"
+WA_QR_BRIDGE_TOKEN = "same_value_as_WA_QR_BRIDGE_TOKEN_in_VM_env"
+WA_API_PREFIX = "/admin/wa"
+```
+`WA_API_PREFIX` defaults to `/admin/wa`; endpoints: `/admin/wa/status`, `/admin/wa/qr`, `/admin/wa/reconnect`.
 
 ## Troubleshooting
 

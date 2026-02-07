@@ -1,6 +1,11 @@
 """
 Secure WhatsApp QR Bridge: proxy status and QR from internal whatsapp-bot to a remote UI
 (Streamlit Cloud) without exposing the bot service. All endpoints require Bearer token.
+
+Routes:
+  /admin/wa/* — admin routes (primary)
+  /wa/*       — public aliases (same auth) for backward compatibility with clients
+                expecting /wa/status, /wa/connect, /wa/qr
 """
 import logging
 import time
@@ -19,8 +24,8 @@ logger = logging.getLogger(__name__)
 
 WA_BOT_BASE_URL = get_secret("WA_BOT_BASE_URL", WHATSAPP_BOT_BASE_URL_DEFAULT).rstrip("/")
 WA_QR_BRIDGE_TOKEN = get_secret("WA_QR_BRIDGE_TOKEN", "").strip()
-WA_QR_TTL_SECONDS = int(get_secret("WA_QR_TTL_SECONDS", "60"))
-WA_QR_RATE_LIMIT_PER_MINUTE = int(get_secret("WA_QR_RATE_LIMIT_PER_MINUTE", "20"))
+WA_QR_TTL_SECONDS = int(get_secret("WA_QR_TTL_SECONDS", "120"))
+WA_QR_RATE_LIMIT_PER_MINUTE = int(get_secret("WA_QR_RATE_LIMIT_PER_MINUTE", "90"))
 WA_BOT_TIMEOUT_SECONDS = 5.0
 
 http_bearer = HTTPBearer(auto_error=False)
@@ -58,14 +63,12 @@ async def require_wa_bridge_token(
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
-router = APIRouter(prefix="/admin/wa", tags=["wa-bridge"], dependencies=[Depends(require_wa_bridge_token)])
+# --- Shared handlers (no router path): used by both /admin/wa and /wa ---
+# Security: both use same Bearer auth. No weakening of auth for /wa/*.
 
 
-@router.get("/status")
-async def wa_status() -> dict:
-    """
-    Proxy to whatsapp-bot /health. Returns connected, status, lastDisconnectReason, server_time.
-    """
+async def _fetch_status() -> dict:
+    """Proxy to whatsapp-bot /health. Returns connected, status, lastDisconnectReason, server_time."""
     now = datetime.now(timezone.utc).isoformat()
     try:
         async with httpx.AsyncClient(timeout=WA_BOT_TIMEOUT_SECONDS) as client:
@@ -96,46 +99,66 @@ async def wa_status() -> dict:
     }
 
 
-@router.get("/qr")
-async def wa_qr(request: Request) -> dict:
+def _fetch_qr_sync() -> dict:
     """
-    Proxy to whatsapp-bot /qr. Rate limited per IP. Returns qr (or null), expires_in, server_time.
-    Never log the QR string.
+    Read Redis first; if miss, proxy to bot and cache on hit.
+    Returns: { "qr": str|null, "status": "qr_ready"|"not_ready", "ts": unix_ts?, "expires_in", "server_time" }
     """
-    ip = _client_ip(request)
-    count = _prune_and_count(ip)
-    if count >= WA_QR_RATE_LIMIT_PER_MINUTE:
-        raise HTTPException(status_code=429, detail="Rate limit exceeded (per minute)")
-    _qr_rate[ip].append(time.monotonic())
+    import time
+    from apps.api.wa_qr_cache import get_cached_qr, set_cached_qr
 
     now = datetime.now(timezone.utc).isoformat()
+    now_ts = time.time()
+
+    # 1) Check Redis first
+    cached = get_cached_qr()
+    if cached:
+        qr_str, ts = cached
+        return {
+            "qr": qr_str,
+            "status": "qr_ready",
+            "ts": int(ts),
+            "expires_in": WA_QR_TTL_SECONDS,
+            "server_time": now,
+        }
+
+    # 2) Proxy to bot
     try:
-        async with httpx.AsyncClient(timeout=WA_BOT_TIMEOUT_SECONDS) as client:
-            r = await client.get(f"{WA_BOT_BASE_URL}/qr")
+        import httpx
+        with httpx.Client(timeout=WA_BOT_TIMEOUT_SECONDS) as client:
+            r = client.get(f"{WA_BOT_BASE_URL}/qr")
             r.raise_for_status()
             data = r.json()
-    except httpx.TimeoutException:
-        logger.warning("wa_bridge: whatsapp-bot qr timeout")
-        return {"qr": None, "expires_in": 0, "server_time": now}
     except Exception as e:
         logger.warning("wa_bridge: whatsapp-bot qr error: %s", type(e).__name__)
-        return {"qr": None, "expires_in": 0, "server_time": now}
+        return {"qr": None, "status": "not_ready", "expires_in": 0, "server_time": now}
 
     qr = data.get("qr")
-    expires_in = WA_QR_TTL_SECONDS if qr else 0
+    if qr:
+        set_cached_qr(qr, ttl=WA_QR_TTL_SECONDS)
+        return {
+            "qr": qr,
+            "status": "qr_ready",
+            "ts": int(now_ts),
+            "expires_in": WA_QR_TTL_SECONDS,
+            "server_time": now,
+        }
     return {
-        "qr": qr,
-        "expires_in": expires_in,
+        "qr": None,
+        "status": "not_ready",
+        "expires_in": 0,
         "server_time": now,
     }
 
 
-@router.post("/reconnect")
-async def wa_reconnect() -> dict:
-    """
-    Trigger whatsapp-bot to logout and reconnect, generating a new QR.
-    Call this before GET /qr to get a fresh QR on demand.
-    """
+async def _fetch_qr() -> dict:
+    """Async wrapper: run sync _fetch_qr_sync in thread pool."""
+    import asyncio
+    return await asyncio.to_thread(_fetch_qr_sync)
+
+
+async def _do_reconnect() -> dict:
+    """Trigger whatsapp-bot to logout and reconnect, generating a new QR."""
     now = datetime.now(timezone.utc).isoformat()
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -148,3 +171,25 @@ async def wa_reconnect() -> dict:
     except Exception as e:
         logger.warning("wa_bridge: whatsapp-bot reconnect error: %s", type(e).__name__)
         return {"ok": False, "error": str(e)[:100], "server_time": now}
+
+
+# --- /admin/wa/* router (unchanged behavior) ---
+router = APIRouter(prefix="/admin/wa", tags=["wa-bridge"], dependencies=[Depends(require_wa_bridge_token)])
+
+
+@router.get("/status")
+async def wa_status() -> dict:
+    """Proxy to whatsapp-bot /health."""
+    return await _fetch_status()
+
+
+@router.get("/qr")
+async def wa_qr() -> dict:
+    """Proxy to whatsapp-bot /qr."""
+    return await _fetch_qr()
+
+
+@router.post("/reconnect")
+async def wa_reconnect() -> dict:
+    """Trigger whatsapp-bot reconnect."""
+    return await _do_reconnect()

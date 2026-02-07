@@ -12,6 +12,7 @@ OPTIONAL_KEYS = (
     "SEED_CLIENT_PASSWORD",
     "SEED_CLIENT_ROLE",
     "WA_QR_BRIDGE_TOKEN",
+    "WA_API_PREFIX",
     "API_KEY",
     "ADMIN_API_KEY",
     "AUTO_REFRESH_SECONDS",
@@ -40,6 +41,7 @@ def has_seed_for_legacy() -> bool:
 def get_config() -> dict[str, Any]:
     """Return full config dict. GNI_API_BASE_URL optional (empty OK)."""
     base_url = _get("GNI_API_BASE_URL", "").rstrip("/")
+    wa_prefix = _get("WA_API_PREFIX", "/admin/wa").strip().rstrip("/") or "/admin/wa"
     token = _get("WA_QR_BRIDGE_TOKEN")
     seed_email = _get("SEED_CLIENT_EMAIL")
     seed_password = _get("SEED_CLIENT_PASSWORD")
@@ -51,6 +53,7 @@ def get_config() -> dict[str, Any]:
         auto_refresh = 3
     return {
         "GNI_API_BASE_URL": base_url,
+        "WA_API_PREFIX": wa_prefix,
         "WA_QR_BRIDGE_TOKEN": token,
         "SEED_CLIENT_EMAIL": seed_email,
         "SEED_CLIENT_PASSWORD": seed_password,

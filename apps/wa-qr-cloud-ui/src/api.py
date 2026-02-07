@@ -1,7 +1,19 @@
 """
 API wrapper: api_get / api_post with base URL and auth. Friendly errors; never log secrets.
+
+WA (WhatsApp) endpoints use a shared request path with:
+- Configurable base path via WA_API_PREFIX (default /admin/wa)
+- Exponential backoff only on transient errors (429, 502, 503, 504)
+- Client-side throttling: same GET endpoint < N seconds ago returns cached result
 """
+import time
 from typing import Any, Optional
+
+
+# --- Client-side throttle: {cache_key: (timestamp, (data, error))} ---
+_wa_cache: dict[str, tuple[float, tuple[Any, Optional[str]]]] = {}
+WA_THROTTLE_STATUS = 6   # seconds
+WA_THROTTLE_QR = 8       # seconds
 
 
 def _get_config():
@@ -213,19 +225,130 @@ def get_wa_status_user() -> tuple[Optional[dict], Optional[str]]:
     return api_get_jwt("/whatsapp/status")
 
 
+def _wa_paths() -> tuple[str, str, str]:
+    """Return (status_path, qr_path, reconnect_path) based on WA_API_PREFIX."""
+    prefix = (_get_config().get("WA_API_PREFIX") or "/admin/wa").strip().rstrip("/") or "/admin/wa"
+    reconnect_segment = "connect" if prefix == "/wa" else "reconnect"
+    return (
+        f"{prefix}/status",
+        f"{prefix}/qr",
+        f"{prefix}/{reconnect_segment}",
+    )
+
+
+def _wa_request(
+    method: str,
+    path: str,
+    json_body: Optional[dict] = None,
+    *,
+    throttle_seconds: float = 0,
+) -> tuple[Optional[Any], Optional[str]]:
+    """
+    Shared WA request: timeout (5s connect, 10s read), exponential backoff on 429/502/503/504.
+    For GET with throttle_seconds > 0, returns cached result if same path called within that window.
+    Returns (data, error_string).
+    """
+    import requests
+
+    cache_key = f"{method} {path}"
+    now = time.time()
+    if method == "GET" and throttle_seconds > 0 and cache_key in _wa_cache:
+        ts, cached = _wa_cache[cache_key]
+        if now - ts < throttle_seconds:
+            return cached
+
+    base = _base_url()
+    if not base:
+        return None, "API base URL not set"
+    url = f"{base}{path}"
+    headers = _headers(use_bearer=True)
+    connect_timeout = 5
+    read_timeout = 10
+    timeout = (connect_timeout, read_timeout)
+
+    max_retries = 2
+    for attempt in range(max_retries + 1):
+        try:
+            if method == "GET":
+                r = requests.get(url, headers=headers, timeout=timeout)
+            else:
+                r = requests.post(url, headers=headers, json=json_body or {}, timeout=timeout)
+
+            if r.status_code in (429, 502, 503, 504) and attempt < max_retries:
+                delay = 2 ** attempt
+                time.sleep(delay)
+                continue
+
+            r.raise_for_status()
+            data = r.json() if r.content else ({} if method == "POST" else None)
+
+            if method == "GET" and throttle_seconds > 0:
+                _wa_cache[cache_key] = (now, (data, None))
+            return data, None
+
+        except requests.exceptions.HTTPError as e:
+            code = e.response.status_code if e.response else 0
+            if code in (429, 502, 503, 504) and attempt < max_retries:
+                delay = 2 ** attempt
+                time.sleep(delay)
+                continue
+            try:
+                detail = e.response.json().get("detail", "Request failed")
+            except Exception:
+                detail = "Request failed"
+            if code == 401:
+                return None, "Authentication failed. Check your secrets."
+            if code == 404:
+                return None, "Endpoint not found."
+            if code == 429:
+                return None, "Rate limit exceeded. Try again in 30 seconds."
+            return None, str(detail)[:200]
+
+        except requests.exceptions.Timeout:
+            return None, "Request timed out."
+        except Exception:
+            return None, "Connection error."
+
+    return None, "Request failed after retries."
+
+
+def clear_wa_cache() -> None:
+    """Clear client-side WA cache. Call before manual Refresh QR."""
+    global _wa_cache
+    _wa_cache.clear()
+
+
 def get_wa_status() -> tuple[Optional[dict], Optional[str]]:
-    """Legacy: GET /admin/wa/status with WA_QR_BRIDGE_TOKEN."""
-    return api_get("/admin/wa/status", use_bearer=True)
+    """GET WA status. Throttled 6s. Returns dict with 'connected' boolean."""
+    path, _, _ = _wa_paths()
+    data, err = _wa_request("GET", path, throttle_seconds=WA_THROTTLE_STATUS)
+    if err:
+        return None, err
+    if not isinstance(data, dict):
+        return {"connected": False, "status": "unknown"}, None
+    connected = data.get("connected", False) or data.get("status") == "open"
+    return {**data, "connected": connected}, None
 
 
-def get_wa_qr() -> tuple[Optional[dict], Optional[str]]:
-    """GET /admin/wa/qr with WA_QR_BRIDGE_TOKEN."""
-    return api_get("/admin/wa/qr", use_bearer=True)
+def get_wa_qr(*, force_refresh: bool = False) -> tuple[Optional[dict], Optional[str]]:
+    """GET WA QR. Throttled 8s unless force_refresh=True. Returns dict with 'qr' (str or None)."""
+    _, path, _ = _wa_paths()
+    if force_refresh:
+        cache_key = f"GET {path}"
+        _wa_cache.pop(cache_key, None)
+    data, err = _wa_request("GET", path, throttle_seconds=0 if force_refresh else WA_THROTTLE_QR)
+    if err:
+        return None, err
+    if not isinstance(data, dict):
+        return {"qr": None}, None
+    qr = data.get("qr")
+    return {"qr": qr if qr else None, **data}, None
 
 
 def post_wa_reconnect() -> tuple[Optional[dict], Optional[str]]:
-    """POST /admin/wa/reconnect — trigger new QR generation. Returns (body, error)."""
-    return api_post("/admin/wa/reconnect", json_body={}, use_bearer=True)
+    """POST WA reconnect. No throttle. Backoff on 429/5xx."""
+    _, _, path = _wa_paths()
+    return _wa_request("POST", path, json_body={})
 
 
 def get_monitoring_status(tenant: Optional[str] = None) -> tuple[Optional[dict], Optional[str]]:

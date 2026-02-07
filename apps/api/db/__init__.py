@@ -1,8 +1,8 @@
 """
 DB engine, session, and models. Re-exports from session.py and models for compatibility.
 """
-from .models import Base  # noqa: F401 — keep so metadata is populated for create_all / Alembic
-from .models import (
+from apps.api.db.models import Base  # noqa: F401 — keep so metadata is populated for create_all / Alembic
+from apps.api.db.models import (
     DeadLetterQueue,
     Draft,
     EventsLog,
@@ -12,7 +12,7 @@ from .models import (
     Settings,
     Source,
 )
-from .session import (
+from apps.api.db.session import (
     SessionLocal,
     check_db,
     engine,

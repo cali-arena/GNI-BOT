@@ -3,7 +3,7 @@ Auth routes: token exchange (API key -> JWT).
 """
 from fastapi import APIRouter, HTTPException, Security
 
-from auth import API_KEY, api_key_header, auth_required, create_token
+from apps.api.auth import API_KEY, api_key_header, auth_required, create_token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 

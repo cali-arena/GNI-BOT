@@ -34,21 +34,7 @@ rsync -avz --delete \
   --exclude='*.pyc' \
   "$REPO_ROOT/" "$REMOTE/"
 
-# 2) If whatsapp-bot exists (sibling apps/whatsapp-bot), sync it so compose build can use ../apps/whatsapp-bot
-WA_BOT_SRC="${REPO_ROOT}/../apps/whatsapp-bot"
-if [ -d "$WA_BOT_SRC" ]; then
-  echo ""
-  echo "2) Syncing whatsapp-bot to VM /opt/apps/whatsapp-bot..."
-  ssh "${VM_USER}@${VM_HOST}" "mkdir -p /opt/apps"
-  rsync -avz --delete \
-    --exclude='node_modules' \
-    --exclude='dist' \
-    --exclude='.git' \
-    "$WA_BOT_SRC/" "${VM_USER}@${VM_HOST}:/opt/apps/whatsapp-bot/"
-else
-  echo ""
-  echo "2) Skipping whatsapp-bot (not found at $WA_BOT_SRC)"
-fi
+# 2) whatsapp-bot is in apps/whatsapp-bot — synced by step 1 with node_modules/dist excluded
 
 echo ""
 echo "3) Running docker compose on VM..."

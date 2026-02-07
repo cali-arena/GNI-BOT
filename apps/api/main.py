@@ -3,18 +3,19 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from auth import require_auth
-from db import init_db
-from middleware import RateLimitMiddleware, RequestIdMiddleware, RequestSizeLimitMiddleware
-from routes.admin import router as admin_router
-from routes.auth_routes import router as auth_router
-from routes.control import router as control_router
-from routes.dlq import router as dlq_router
-from routes.health import router as health_router
-from routes.metrics import router as metrics_router
-from routes.review import router as review_router
-from routes.sources import router as sources_router
-from routes.wa_bridge import router as wa_bridge_router
+from apps.api.auth import require_auth
+from apps.api.db import init_db
+from apps.api.middleware import RateLimitMiddleware, RequestIdMiddleware, RequestSizeLimitMiddleware
+from apps.api.routes.admin import router as admin_router
+from apps.api.routes.auth_routes import router as auth_router
+from apps.api.routes.control import router as control_router
+from apps.api.routes.dlq import router as dlq_router
+from apps.api.routes.health import router as health_router
+from apps.api.routes.metrics import router as metrics_router
+from apps.api.routes.review import router as review_router
+from apps.api.routes.sources import router as sources_router
+from apps.api.routes.wa_bridge import router as wa_bridge_router
+from apps.api.routes.wa_public import wa_public_router
 
 from apps.shared.config import ConfigError, validate_config
 from apps.shared.env_validation import EnvValidationError, validate_env
@@ -30,6 +31,7 @@ if _streamlit_origin:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import asyncio
     import logging
     logger = logging.getLogger(__name__)
     try:
@@ -43,8 +45,19 @@ async def lifespan(app: FastAPI):
     db_mask = "postgresql://***" if (settings.DATABASE_URL or "").startswith("postgresql://") else "(not set)"
     logger.info("Config loaded: DB=%s, JWT_EXPIRY_SECONDS=%s", db_mask, settings.JWT_EXPIRY_SECONDS)
     init_db()
+
+    # Start WhatsApp QR keepalive background task (checks status, reconnect, cache QR)
+    from apps.api.wa_keepalive import run_keepalive_loop
+    _wa_keepalive_task = asyncio.create_task(run_keepalive_loop())
+
     yield
-    # Shutdown: Uvicorn handles SIGTERM; stop accepting new requests, drain in-flight
+
+    # Shutdown: cancel keepalive, drain in-flight
+    _wa_keepalive_task.cancel()
+    try:
+        await _wa_keepalive_task
+    except asyncio.CancelledError:
+        pass
 
 
 app = FastAPI(title="gni-bot-creator API", lifespan=lifespan)
@@ -64,6 +77,7 @@ app.include_router(health_router)
 app.include_router(metrics_router)
 app.include_router(admin_router)
 app.include_router(wa_bridge_router)
+app.include_router(wa_public_router)
 app.include_router(auth_router)
 app.include_router(control_router, dependencies=[Depends(require_auth)])
 app.include_router(dlq_router, dependencies=[Depends(require_auth)])

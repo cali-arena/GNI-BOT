@@ -145,10 +145,10 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # Optional: enable with --profile whatsapp. Build context must be ../apps/whatsapp-bot (e.g. clone to /opt/apps/whatsapp-bot).
+  # Optional: enable with --profile whatsapp. Build context: apps/whatsapp-bot (inside repo).
   whatsapp-bot:
     build:
-      context: ../apps/whatsapp-bot
+      context: apps/whatsapp-bot
       dockerfile: Dockerfile
     environment:
       PORT: 3100
