@@ -41,7 +41,7 @@ def has_seed_for_legacy() -> bool:
 def get_config() -> dict[str, Any]:
     """Return full config dict. GNI_API_BASE_URL optional (empty OK)."""
     base_url = _get("GNI_API_BASE_URL", "").rstrip("/")
-    wa_prefix = _get("WA_API_PREFIX", "/admin/wa").strip().rstrip("/") or "/admin/wa"
+    wa_prefix = _get("WA_API_PREFIX", "/wa").strip().rstrip("/") or "/wa"
     token = _get("WA_QR_BRIDGE_TOKEN")
     seed_email = _get("SEED_CLIENT_EMAIL")
     seed_password = _get("SEED_CLIENT_PASSWORD")

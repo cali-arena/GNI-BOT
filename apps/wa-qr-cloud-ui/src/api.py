@@ -1,8 +1,8 @@
 """
 API wrapper: api_get / api_post with base URL and auth. Friendly errors; never log secrets.
 
-WA (WhatsApp) endpoints use a shared request path with:
-- Configurable base path via WA_API_PREFIX (default /admin/wa)
+WA (WhatsApp) endpoints use public /wa/* with X-API-Key:
+- Configurable base path via WA_API_PREFIX (default /wa)
 - Exponential backoff only on transient errors (429, 502, 503, 504)
 - Client-side throttling: same GET endpoint < N seconds ago returns cached result
 """
@@ -12,8 +12,8 @@ from typing import Any, Optional
 
 # --- Client-side throttle: {cache_key: (timestamp, (data, error))} ---
 _wa_cache: dict[str, tuple[float, tuple[Any, Optional[str]]]] = {}
-WA_THROTTLE_STATUS = 6   # seconds
-WA_THROTTLE_QR = 8       # seconds
+WA_THROTTLE_STATUS = 8   # seconds (status cache)
+WA_THROTTLE_QR = 12      # seconds (QR cache)
 
 
 def _get_config():
@@ -176,14 +176,6 @@ def get_health() -> tuple[Optional[dict], Optional[str]]:
     return api_get("/health", use_bearer=False)
 
 
-def get_wa_status() -> tuple[Optional[dict], Optional[str]]:
-    return api_get("/admin/wa/status", use_bearer=True)
-
-
-def get_wa_qr() -> tuple[Optional[dict], Optional[str]]:
-    return api_get("/admin/wa/qr", use_bearer=True)
-
-
 def post_auth_login(email: str, password: str) -> tuple[Optional[dict], Optional[str]]:
     """POST /auth/login. Returns (body with access_token, error). No auth header."""
     import requests
@@ -226,8 +218,8 @@ def get_wa_status_user() -> tuple[Optional[dict], Optional[str]]:
 
 
 def _wa_paths() -> tuple[str, str, str]:
-    """Return (status_path, qr_path, reconnect_path) based on WA_API_PREFIX."""
-    prefix = (_get_config().get("WA_API_PREFIX") or "/admin/wa").strip().rstrip("/") or "/admin/wa"
+    """Return (status_path, qr_path, reconnect_path) based on WA_API_PREFIX (default /wa)."""
+    prefix = (_get_config().get("WA_API_PREFIX") or "/wa").strip().rstrip("/") or "/wa"
     reconnect_segment = "connect" if prefix == "/wa" else "reconnect"
     return (
         f"{prefix}/status",
@@ -244,11 +236,15 @@ def _wa_request(
     throttle_seconds: float = 0,
 ) -> tuple[Optional[Any], Optional[str]]:
     """
-    Shared WA request: timeout (5s connect, 10s read), exponential backoff on 429/502/503/504.
-    For GET with throttle_seconds > 0, returns cached result if same path called within that window.
+    Shared WA request to /wa/*: uses X-API-Key. Timeout (5s connect, 10s read), exponential
+    backoff on 429/502/503/504. For GET with throttle_seconds > 0, returns cached result.
     Returns (data, error_string).
     """
     import requests
+
+    api_key = (_get_config().get("API_KEY") or _get_config().get("ADMIN_API_KEY") or "").strip()
+    if not api_key:
+        return None, "Missing API key. Set X-API-Key."
 
     cache_key = f"{method} {path}"
     now = time.time()
@@ -261,7 +257,7 @@ def _wa_request(
     if not base:
         return None, "API base URL not set"
     url = f"{base}{path}"
-    headers = _headers(use_bearer=True)
+    headers = _headers(use_bearer=False)
     connect_timeout = 5
     read_timeout = 10
     timeout = (connect_timeout, read_timeout)
@@ -297,7 +293,7 @@ def _wa_request(
             except Exception:
                 detail = "Request failed"
             if code == 401:
-                return None, "Authentication failed. Check your secrets."
+                return None, "Unauthorized (check API key)."
             if code == 404:
                 return None, "Endpoint not found."
             if code == 429:

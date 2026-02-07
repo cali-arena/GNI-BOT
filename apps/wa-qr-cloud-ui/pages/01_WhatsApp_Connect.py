@@ -41,6 +41,13 @@ if not base and get_config().get("GNI_API_BASE_URL"):
 if not base:
     st.warning("Backend URL not set. Go to Home to set it.")
     st.switch_page("app.py")
+
+api_key = (get_config().get("API_KEY") or get_config().get("ADMIN_API_KEY") or "").strip()
+if not api_key:
+    st.error("Missing API key. Set X-API-Key.")
+    st.caption("Configure API_KEY or ADMIN_API_KEY in Streamlit secrets or env to call /wa/* endpoints.")
+    st.stop()
+
 inject_app_css()
 render_sidebar("client", "whatsapp", api_base_url=base, user_email="")
 
@@ -83,7 +90,9 @@ st.subheader("Status: %s" % status_label)
 if connected:
     st.success("Connected ✅")
 elif status_err:
-    if status_err and "rate limit" in status_err.lower():
+    if "Unauthorized" in status_err or "API key" in status_err:
+        st.error("Unauthorized (check API key).")
+    elif status_err and "rate limit" in status_err.lower():
         st.error("Rate limited. Wait 30 seconds, then click Refresh.")
     else:
         st.error(status_err)
@@ -184,9 +193,12 @@ if not connected:
             _cached_qr.clear()
             qr_data, qr_err = get_wa_qr(force_refresh=True)
             if qr_err:
-                st.session_state.wa_refresh_msg = "⚠️ " + (
-                    qr_err if "rate limit" not in (qr_err or "").lower() else "Rate limited. Try again in 30 seconds."
-                )
+                if "Unauthorized" in (qr_err or "") or "API key" in (qr_err or ""):
+                    st.session_state.wa_refresh_msg = "⚠️ Unauthorized (check API key)."
+                elif "rate limit" in (qr_err or "").lower():
+                    st.session_state.wa_refresh_msg = "⚠️ Rate limited. Try again in 30 seconds."
+                else:
+                    st.session_state.wa_refresh_msg = "⚠️ " + (qr_err or "Request failed")
             elif isinstance(qr_data, dict) and qr_data.get("qr"):
                 st.session_state.wa_qr_string = qr_data.get("qr")
                 st.session_state.wa_last_refresh = datetime.now().strftime("%H:%M:%S")
