@@ -1,50 +1,40 @@
 """
-Auth: bcrypt, session-only (st.session_state). No file persistence (Cloud-safe).
-Seed user from SEED_CLIENT_* in config; login/logout/require_login/require_role/current_user.
+Auth: session-only (st.session_state). Seed user uses sentinel to avoid passlib/bcrypt
+(which fails on Streamlit Cloud with Python 3.13). No file persistence (Cloud-safe).
 """
 from typing import Any, Optional
 
+_SEED_PASSWORD_SENTINEL = "__SEED_PLAIN_COMPARE__"
+
 try:
-    from passlib.hash import bcrypt as passlib_bcrypt
-    _use_passlib = True
+    import bcrypt as bcrypt_lib
+    _has_bcrypt = True
 except ImportError:
-    try:
-        import bcrypt
-        _use_passlib = False
-    except ImportError:
-        bcrypt = None
-        passlib_bcrypt = None
-        _use_passlib = False
+    bcrypt_lib = None
+    _has_bcrypt = False
 
-
-# In-memory only (no disk). Seed user populated on startup.
 _users: dict[str, dict[str, Any]] = {}
 
 
-def _hash_password(plain: str) -> str:
-    if _use_passlib and passlib_bcrypt:
-        return passlib_bcrypt.hash(plain)
-    if bcrypt:
-        return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-    raise RuntimeError("Install passlib[bcrypt] or bcrypt")
-
-
 def _verify_password(plain: str, hashed: str) -> bool:
-    if not plain or not hashed:
+    if not plain:
+        return False
+    if hashed == _SEED_PASSWORD_SENTINEL:
+        from src.config import get_config
+        seed = (get_config().get("SEED_CLIENT_PASSWORD") or "").strip()
+        return seed == plain
+    if not hashed:
         return False
     try:
-        if _use_passlib and passlib_bcrypt:
-            return passlib_bcrypt.verify(plain, hashed)
-        if bcrypt:
-            return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+        if bcrypt_lib:
+            return bcrypt_lib.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
     except Exception:
         return False
     return False
 
 
 def seed_user_if_needed() -> None:
-    """Seed the single client user from config (secrets). Idempotent. In-memory only."""
-    import streamlit as st
+    """Seed user from config. Uses sentinel — no passlib/bcrypt call (Streamlit Cloud safe)."""
     from src.config import get_config
     cfg = get_config()
     email = (cfg.get("SEED_CLIENT_EMAIL") or "").strip().lower()
@@ -54,11 +44,7 @@ def seed_user_if_needed() -> None:
         return
     if email in _users:
         return
-    _users[email] = {
-        "email": email,
-        "password_hash": _hash_password(password),
-        "role": role,
-    }
+    _users[email] = {"email": email, "password_hash": _SEED_PASSWORD_SENTINEL, "role": role}
 
 
 def login(email: str, password: str) -> bool:
