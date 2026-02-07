@@ -1,8 +1,9 @@
 """
-WhatsApp Connect — click Connect/Reconnect to generate QR on demand. QR persists until new click.
+WhatsApp Connect — Connect/Reconnect to generate QR. Manual Refresh to avoid rate limiting.
 """
 import io
 import time
+from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
@@ -20,12 +21,14 @@ render_sidebar("client", "whatsapp", api_base_url=base, user_email="")
 
 if "wa_qr_string" not in st.session_state:
     st.session_state.wa_qr_string = None
-if "wa_polling" not in st.session_state:
-    st.session_state.wa_polling = False
-if "wa_poll_count" not in st.session_state:
-    st.session_state.wa_poll_count = 0
-if "wa_poll_failed" not in st.session_state:
-    st.session_state.wa_poll_failed = False
+if "wa_last_refresh" not in st.session_state:
+    st.session_state.wa_last_refresh = "Never"
+if "wa_refresh_count" not in st.session_state:
+    st.session_state.wa_refresh_count = 0
+if "wa_pause_auto" not in st.session_state:
+    st.session_state.wa_pause_auto = False
+if "wa_refresh_msg" not in st.session_state:
+    st.session_state.wa_refresh_msg = None
 
 # Centered logo + title + subtitle at top
 _logo = Path(__file__).parent.parent / "assets" / "whatsapp-logo.webp"
@@ -51,7 +54,10 @@ st.subheader("Status: %s" % status_label)
 if connected:
     st.success("Connected ✅")
 elif status_err:
-    st.error(status_err)
+    if status_err and "rate limit" in status_err.lower():
+        st.error("Rate limited. Wait 30 seconds, then click Refresh.")
+    else:
+        st.error(status_err)
 else:
     st.info("Disconnected — click Connect WhatsApp to show QR code")
 if last_reason:
@@ -62,62 +68,88 @@ st.subheader("How to connect")
 for i, step in enumerate(["Open WhatsApp on your phone", "Settings → Linked Devices", "Link a Device", "Scan the QR code below"], 1):
     st.markdown("%d. %s" % (i, step))
 
-MAX_POLL = 20  # ~40 seconds max wait for QR
+INITIAL_WAIT = 25
+MAX_AUTO_REFRESH = 3
+REFRESH_INTERVAL = 15
 
-# Connect WhatsApp: trigger reconnect, then poll for QR
+# Connect WhatsApp: trigger reconnect, wait, then fetch QR once
 if st.button("Connect WhatsApp", key="wa_connect"):
-    with st.spinner("Generating QR code…"):
+    with st.spinner("Starting… please wait 25 seconds for QR…"):
         _, err = post_wa_reconnect()
         if err:
             st.error(err)
         else:
             st.session_state.wa_qr_string = None
-            st.session_state.wa_polling = True
-            st.session_state.wa_poll_count = 0
-            st.session_state.wa_poll_failed = False
+            st.session_state.wa_refresh_count = 0
+            time.sleep(INITIAL_WAIT)
+            qr_data, qr_err = get_wa_qr()
+            if qr_err and "rate limit" in (qr_err or "").lower():
+                st.session_state.wa_qr_string = None
+                st.warning("Rate limited. Click Refresh in 30 seconds.")
+            elif isinstance(qr_data, dict) and qr_data.get("qr"):
+                st.session_state.wa_qr_string = qr_data.get("qr")
+                st.session_state.wa_last_refresh = datetime.now().strftime("%H:%M:%S")
     st.rerun()
 
-# Reconnect: same as Connect — new QR on demand
+# Reconnect: same as Connect
 if st.button("Reconnect", key="wa_reconnect"):
-    with st.spinner("Generating new QR code…"):
+    with st.spinner("Starting… please wait 25 seconds for QR…"):
         _, err = post_wa_reconnect()
         if err:
             st.error(err)
         else:
             st.session_state.wa_qr_string = None
-            st.session_state.wa_polling = True
-            st.session_state.wa_poll_count = 0
-            st.session_state.wa_poll_failed = False
+            st.session_state.wa_refresh_count = 0
+            time.sleep(INITIAL_WAIT)
+            qr_data, qr_err = get_wa_qr()
+            if qr_err and "rate limit" in (qr_err or "").lower():
+                st.warning("Rate limited. Click Refresh in 30 seconds.")
+            elif isinstance(qr_data, dict) and qr_data.get("qr"):
+                st.session_state.wa_qr_string = qr_data.get("qr")
+                st.session_state.wa_last_refresh = datetime.now().strftime("%H:%M:%S")
     st.rerun()
 
-# Poll for QR when waiting
-if st.session_state.wa_polling and not connected:
-    st.session_state.wa_poll_count = st.session_state.wa_poll_count + 1
-    if st.session_state.wa_poll_count > MAX_POLL:
-        st.session_state.wa_polling = False
-        st.session_state.wa_poll_failed = True
-        st.rerun()
-    else:
-        st.caption("⏳ Waiting for QR… (%d/%d)" % (st.session_state.wa_poll_count, MAX_POLL))
-        qr_data, qr_err = get_wa_qr()
-        if isinstance(qr_data, dict) and qr_data.get("qr"):
-            st.session_state.wa_qr_string = qr_data.get("qr")
-            st.session_state.wa_polling = False
-        elif qr_err:
-            st.session_state.wa_polling = False
-            st.error(qr_err)
-        else:
-            time.sleep(2)
+# Manual Refresh button — avoids rate limiting
+if not connected:
+    st.caption("Last refresh: %s" % st.session_state.wa_last_refresh)
+    if st.session_state.wa_refresh_msg:
+        st.warning(st.session_state.wa_refresh_msg)
+        st.session_state.wa_refresh_msg = None
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        if st.button("🔄 Refresh QR", key="manual_refresh"):
+            qr_data, qr_err = get_wa_qr()
+            if qr_err:
+                st.session_state.wa_refresh_msg = "⚠️ " + (qr_err if "rate limit" not in (qr_err or "").lower() else "Rate limited. Try again in 30 seconds.")
+            elif isinstance(qr_data, dict) and qr_data.get("qr"):
+                st.session_state.wa_qr_string = qr_data.get("qr")
+                st.session_state.wa_last_refresh = datetime.now().strftime("%H:%M:%S")
+                st.session_state.wa_refresh_msg = None
+            else:
+                st.session_state.wa_refresh_msg = "No QR yet. Click Connect WhatsApp first, then wait 25 sec."
             st.rerun()
 
-if st.session_state.wa_poll_failed:
-    st.warning("QR didn't appear in time. Click **Reconnect** to try again.")
-
-# Also fetch current QR if not polling (e.g. page refresh while bot has QR)
-if not connected and not st.session_state.wa_qr_string and not st.session_state.wa_polling and not st.session_state.wa_poll_failed:
+# Initial fetch: if no QR in session, try once (e.g. page refresh while bot has QR)
+if not connected and not st.session_state.wa_qr_string and st.session_state.wa_refresh_count == 0 and not st.session_state.wa_pause_auto:
     qr_data, _ = get_wa_qr()
     if isinstance(qr_data, dict) and qr_data.get("qr"):
         st.session_state.wa_qr_string = qr_data.get("qr")
+        st.session_state.wa_last_refresh = datetime.now().strftime("%H:%M:%S")
+
+# Limited auto-refresh (only when no QR yet, max 3 times, 15s interval)
+if not connected and not st.session_state.wa_qr_string and not st.session_state.wa_pause_auto:
+    if st.session_state.wa_refresh_count < MAX_AUTO_REFRESH:
+        st.caption("⏳ Auto-refreshing… (%d/%d)" % (st.session_state.wa_refresh_count + 1, MAX_AUTO_REFRESH))
+        time.sleep(REFRESH_INTERVAL)
+        st.session_state.wa_refresh_count += 1
+        qr_data, qr_err = get_wa_qr()
+        if isinstance(qr_data, dict) and qr_data.get("qr"):
+            st.session_state.wa_qr_string = qr_data.get("qr")
+            st.session_state.wa_last_refresh = datetime.now().strftime("%H:%M:%S")
+        st.rerun()
+    else:
+        st.session_state.wa_pause_auto = True
+        st.warning("Auto-refresh paused. Click **Refresh QR** or **Reconnect** to continue.")
 
 # Display persistent QR
 qr_string = st.session_state.wa_qr_string
