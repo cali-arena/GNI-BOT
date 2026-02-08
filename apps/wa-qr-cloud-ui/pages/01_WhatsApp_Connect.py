@@ -110,16 +110,17 @@ if not connected and not st.session_state.wa_qr_string and not st.session_state.
     st.info("👆 **Click Connect WhatsApp below** to start. QR appears within ~90 seconds.")
 
 
-def _poll_one_tick() -> Optional[str]:
-    """Fetch QR once (bypass throttle for fresh result). Return qr string or None."""
+def _poll_one_tick() -> tuple[Optional[str], Optional[str]]:
+    """Fetch QR once (bypass throttle for fresh result). Returns (qr_string, error)."""
     qr_data, qr_err = get_wa_qr(force_refresh=True)
     if qr_err:
-        return None
+        return None, qr_err
     if isinstance(qr_data, dict) and qr_data.get("qr"):
-        return qr_data.get("qr")
+        return qr_data.get("qr"), None
     if isinstance(qr_data, dict) and qr_data.get("status") == "qr_ready" and qr_data.get("qr"):
-        return qr_data.get("qr")
-    return None
+        return qr_data.get("qr"), None
+    # No QR yet, but no error - still polling
+    return None, None
 
 
 # --- Connect: trigger reconnect once, start polling ---
@@ -132,10 +133,18 @@ if st.button("Connect WhatsApp", key="wa_connect"):
     st.session_state.wa_poll_started_at = time.time()
     st.session_state.wa_poll_count = 0
     st.session_state.wa_paused = False
-    _, err = post_wa_reconnect()
+    connect_data, err = post_wa_reconnect()
     if err:
         st.session_state.wa_polling = False
-        st.session_state.wa_refresh_msg = err
+        if "Unauthorized" in err or "API key" in err:
+            st.session_state.wa_refresh_msg = "⚠️ Unauthorized (check API key)."
+        elif "rate limit" in err.lower():
+            st.session_state.wa_refresh_msg = "⚠️ Rate limited. Try again in 30 seconds."
+        else:
+            st.session_state.wa_refresh_msg = "⚠️ " + err
+    elif connect_data:
+        # Connect succeeded, start polling
+        st.session_state.wa_refresh_msg = None
     st.rerun()
 
 # --- Reconnect: same as Connect ---
@@ -148,10 +157,18 @@ if st.button("Reconnect", key="wa_reconnect"):
     st.session_state.wa_poll_started_at = time.time()
     st.session_state.wa_poll_count = 0
     st.session_state.wa_paused = False
-    _, err = post_wa_reconnect()
+    connect_data, err = post_wa_reconnect()
     if err:
         st.session_state.wa_polling = False
-        st.session_state.wa_refresh_msg = err
+        if "Unauthorized" in err or "API key" in err:
+            st.session_state.wa_refresh_msg = "⚠️ Unauthorized (check API key)."
+        elif "rate limit" in err.lower():
+            st.session_state.wa_refresh_msg = "⚠️ Rate limited. Try again in 30 seconds."
+        else:
+            st.session_state.wa_refresh_msg = "⚠️ " + err
+    elif connect_data:
+        # Reconnect succeeded, start polling
+        st.session_state.wa_refresh_msg = None
     st.rerun()
 
 # --- Polling: one tick per rerun, capped ---
@@ -166,13 +183,23 @@ if (
         idx = min(st.session_state.wa_poll_count, len(POLL_INTERVALS) - 1)
         interval = POLL_INTERVALS[idx]
         st.caption("⏳ Polling for QR… (%ds / %ds)" % (int(elapsed), POLL_MAX_WAIT))
-        qr = _poll_one_tick()
-        if qr:
+        qr, poll_err = _poll_one_tick()
+        if poll_err:
+            # Show error and stop polling
+            st.session_state.wa_polling = False
+            if "Unauthorized" in poll_err or "API key" in poll_err:
+                st.session_state.wa_refresh_msg = "⚠️ Unauthorized (check API key)."
+            elif "rate limit" in poll_err.lower():
+                st.session_state.wa_refresh_msg = "⚠️ Rate limited. Try again in 30 seconds."
+            else:
+                st.session_state.wa_refresh_msg = "⚠️ " + poll_err
+        elif qr:
             st.session_state.wa_qr_string = qr
             st.session_state.wa_last_refresh = datetime.now().strftime("%H:%M:%S")
             st.session_state.wa_polling = False
             st.session_state.wa_refresh_msg = None
         else:
+            # No QR yet, continue polling
             st.session_state.wa_poll_count += 1
             time.sleep(min(interval, POLL_MAX_WAIT - elapsed))
         st.rerun()
@@ -256,3 +283,19 @@ with st.expander("FAQ"):
     st.caption("This links your WhatsApp account so the bot can send/receive messages.")
     st.markdown("**How to disconnect?**")
     st.caption("In WhatsApp: Settings → Linked Devices → select this device → Log out.")
+
+with st.expander("🔍 Debug Info"):
+    st.caption("Last API responses (for troubleshooting):")
+    if st.session_state.wa_connect_clicked:
+        st.code(f"Connect clicked: Yes\nPolling: {st.session_state.wa_polling}\nPoll count: {st.session_state.wa_poll_count}")
+    if status_err:
+        st.error(f"Status error: {status_err}")
+    if status_data:
+        st.json(status_data)
+    # Test QR endpoint
+    if st.button("Test QR endpoint", key="test_qr"):
+        qr_test, qr_test_err = get_wa_qr(force_refresh=True)
+        if qr_test_err:
+            st.error(f"QR error: {qr_test_err}")
+        else:
+            st.json(qr_test)
