@@ -25,7 +25,13 @@ function clearAuthFolder() {
   try {
     if (fs.existsSync(AUTH_FOLDER)) {
       for (const f of fs.readdirSync(AUTH_FOLDER)) {
-        fs.unlinkSync(path.join(AUTH_FOLDER, f));
+        const p = path.join(AUTH_FOLDER, f);
+        const stat = fs.statSync(p);
+        if (stat.isDirectory()) {
+          fs.rmSync(p, { recursive: true });
+        } else {
+          fs.unlinkSync(p);
+        }
       }
     }
   } catch (e) {
@@ -53,6 +59,7 @@ async function connect() {
   sock.ev.on('connection.update', (up) => {
     if (up.qr) {
       qrValue = up.qr;
+      logger.info('QR code generated');
       qrcode.generate(up.qr, { small: true });
     } else {
       qrValue = null;
@@ -95,9 +102,10 @@ app.post('/reconnect', async (req, res) => {
       try { sock.end(undefined); } catch (_) {}
       sock = null;
     }
-    clearAuthFolder();
     connected = false;
     qrValue = null;
+    clearAuthFolder();
+    await new Promise((r) => setTimeout(r, 2000));
     await connect();
     res.json({ ok: true, message: 'Reconnecting; new QR will appear shortly.' });
   } catch (e) {
