@@ -9,6 +9,8 @@ import threading
 import time
 from typing import Any, Optional
 
+from apps.api.settings_utils import env_int
+
 
 def _normalize_prompt(text: str) -> str:
     """Normalize prompt for stable hash: strip, collapse whitespace."""
@@ -23,7 +25,7 @@ def prompt_hash(*parts: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
-CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL_SECONDS", "86400"))  # 24h default
+CACHE_TTL_SECONDS = env_int("CACHE_TTL_SECONDS", default=86400)  # 24h default
 CACHE_PREFIX = "gni:"
 
 

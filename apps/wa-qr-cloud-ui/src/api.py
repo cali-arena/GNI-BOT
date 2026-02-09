@@ -218,13 +218,12 @@ def get_wa_status_user() -> tuple[Optional[dict], Optional[str]]:
 
 
 def _wa_paths() -> tuple[str, str, str]:
-    """Return (status_path, qr_path, reconnect_path) based on WA_API_PREFIX (default /wa)."""
-    prefix = (_get_config().get("WA_API_PREFIX") or "/wa").strip().rstrip("/") or "/wa"
-    reconnect_segment = "connect" if prefix == "/wa" else "reconnect"
+    """Return (status_path, qr_path, reconnect_path) for /admin/wa/* endpoints."""
+    # Always use /admin/wa/* endpoints with X-API-Key
     return (
-        f"{prefix}/status",
-        f"{prefix}/qr",
-        f"{prefix}/{reconnect_segment}",
+        "/admin/wa/status",
+        "/admin/wa/qr",
+        "/admin/wa/reconnect",
     )
 
 

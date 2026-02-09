@@ -19,13 +19,20 @@ from apps.api.db import init_db
 from apps.collector.rss import run as run_rss_ingest
 from apps.collector.telegram_ingest import run as run_telegram_ingest
 from apps.shared.config import validate_config
+from apps.shared.env_helpers import get_int_env
 
-COLLECTOR_INTERVAL_MINUTES = int(
-    os.environ.get("COLLECTOR_INTERVAL_MINUTES")
-    or os.environ.get("COLLECTOR_INTERVAL", "15")
-)
-INGEST_LIMIT = int(os.environ.get("INGEST_LIMIT", "50"))
-TELEGRAM_SINCE_MINUTES = int(os.environ.get("TELEGRAM_SINCE_MINUTES", "60"))
+# COLLECTOR_INTERVAL_MINUTES can come from COLLECTOR_INTERVAL_MINUTES or COLLECTOR_INTERVAL
+_collector_interval_raw = os.environ.get("COLLECTOR_INTERVAL_MINUTES") or os.environ.get("COLLECTOR_INTERVAL", "")
+if _collector_interval_raw and _collector_interval_raw.strip():
+    # Use the first non-empty value found
+    if os.environ.get("COLLECTOR_INTERVAL_MINUTES"):
+        COLLECTOR_INTERVAL_MINUTES = get_int_env("COLLECTOR_INTERVAL_MINUTES", default=15)
+    else:
+        COLLECTOR_INTERVAL_MINUTES = get_int_env("COLLECTOR_INTERVAL", default=15)
+else:
+    COLLECTOR_INTERVAL_MINUTES = 15
+INGEST_LIMIT = get_int_env("INGEST_LIMIT", default=50)
+TELEGRAM_SINCE_MINUTES = get_int_env("TELEGRAM_SINCE_MINUTES", default=60)
 
 _shutdown = False
 

@@ -10,10 +10,12 @@ import time
 from enum import Enum
 from typing import Callable, TypeVar
 
+from apps.shared.env_helpers import parse_int
+
 T = TypeVar("T")
 
 # Config
-FAILURE_THRESHOLD = int(os.environ.get("CIRCUIT_FAILURE_THRESHOLD", "5"))
+FAILURE_THRESHOLD = get_int_env("CIRCUIT_FAILURE_THRESHOLD", default=5)
 RECOVERY_TIMEOUT = float(os.environ.get("CIRCUIT_RECOVERY_TIMEOUT", "60.0"))
 
 

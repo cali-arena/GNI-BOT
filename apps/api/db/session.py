@@ -13,15 +13,16 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session, sessionmaker
 
 from apps.shared.config import DATABASE_URL_DEFAULT
+from apps.shared.env_helpers import parse_int
 from apps.shared.secrets import get_secret
 
 logger = logging.getLogger(__name__)
 
 # Pool config: env overrides with safe defaults
-POOL_SIZE = int(get_secret("DB_POOL_SIZE", "5"))
-MAX_OVERFLOW = int(get_secret("DB_MAX_OVERFLOW", "10"))
-POOL_RECYCLE = int(get_secret("DB_POOL_RECYCLE", "1800"))  # 30 min
-POOL_TIMEOUT = int(get_secret("DB_POOL_TIMEOUT", "30"))
+POOL_SIZE = parse_int(get_secret("DB_POOL_SIZE", ""), default=5, min_val=1, name="DB_POOL_SIZE")
+MAX_OVERFLOW = parse_int(get_secret("DB_MAX_OVERFLOW", ""), default=10, min_val=0, name="DB_MAX_OVERFLOW")
+POOL_RECYCLE = parse_int(get_secret("DB_POOL_RECYCLE", ""), default=1800, min_val=60, name="DB_POOL_RECYCLE")  # 30 min
+POOL_TIMEOUT = parse_int(get_secret("DB_POOL_TIMEOUT", ""), default=30, min_val=1, name="DB_POOL_TIMEOUT")
 
 
 def get_engine() -> Engine:

@@ -7,9 +7,11 @@ import os
 import time
 from typing import Callable, TypeVar
 
+from apps.shared.env_helpers import parse_int
+
 T = TypeVar("T")
 
-PUBLISH_MAX_ATTEMPTS = int(os.environ.get("PUBLISH_MAX_ATTEMPTS") or "3")
+PUBLISH_MAX_ATTEMPTS = get_int_env("PUBLISH_MAX_ATTEMPTS", default=3)
 BACKOFF_BASE = float(os.environ.get("PUBLISH_BACKOFF_BASE") or "1.0")
 
 # Import for "no retry" check; avoid circular import

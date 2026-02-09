@@ -54,7 +54,77 @@ This runs `docker compose up -d`, waits until the API healthcheck passes (max 12
 
    **Control plane endpoints** (require auth): `/control/pause`, `/control/resume`, `/control/status`, `/sources`, `/review/pending`, `/review/{id}/approve`, `/review/{id}/reject`. `/control/status` returns pause flags, pipeline counters (items/drafts/publications last hour), dependency status (db, redis, ollama), last 10 failures from events_log.
 
-4. Stop:
+4. **Environment variable configuration** — Numeric environment variables are parsed safely using `get_int_env()`:
+   - **Missing/empty/whitespace** → Uses default value (no error)
+   - **Non-numeric value** (e.g., `"abc"`) → Raises `ValueError` with clear message
+   - **Valid integer** → Parsed and used
+   - **Out of range** (below min or above max) → Raises `ValueError` with clear message
+   
+   **Best practice:** Never set numeric env vars to empty strings (`""`). Either omit them (to use defaults) or set valid integers. Examples:
+   ```bash
+   # ✅ Good: omit to use default
+   # API_RATE_LIMIT_PER_MINUTE not set → defaults to 60
+   
+   # ✅ Good: set valid integer
+   API_RATE_LIMIT_PER_MINUTE=100
+   
+   # ❌ Bad: empty string uses default (no error, but not explicit)
+   API_RATE_LIMIT_PER_MINUTE=""
+   
+   # ❌ Bad: non-numeric raises ValueError
+   API_RATE_LIMIT_PER_MINUTE="abc"  # Raises: Environment variable API_RATE_LIMIT_PER_MINUTE must be an integer
+   ```
+   
+   **Numeric environment variables and defaults:**
+   
+   **API (`apps/api/middleware.py`):**
+   - `API_RATE_LIMIT_PER_MINUTE` (default: 60, min: 1)
+   - `API_RATE_LIMIT_PER_HOUR` (default: 1000, min: 1)
+   - `API_MAX_BODY_SIZE` (default: 65536, min: 1024) — 64KB
+   
+   **API Database (`apps/api/db/session.py`):**
+   - `DB_POOL_SIZE` (default: 5, min: 1)
+   - `DB_MAX_OVERFLOW` (default: 10, min: 0)
+   - `DB_POOL_RECYCLE` (default: 1800, min: 60) — 30 minutes
+   - `DB_POOL_TIMEOUT` (default: 30, min: 1)
+   
+   **Worker Cache (`apps/worker/cache.py`):**
+   - `CACHE_TTL_SECONDS` (default: 86400, min: 1) — 24 hours
+   
+   **Worker Tasks (`apps/worker/tasks.py`):**
+   - `RUN_EVERY_MINUTES` (default: 15, min: 1)
+   - `TELEGRAM_SINCE_MINUTES` (default: 60, min: 1)
+   - `PUBLISH_MAX_WORKERS` (default: 4, min: 1)
+   - `MAX_PIPELINE_ATTEMPTS` (default: 3, min: 1)
+   
+   **Worker Retry (`apps/worker/retry.py`):**
+   - `PUBLISH_MAX_ATTEMPTS` (default: 3, min: 1)
+   
+   **Worker Render (`apps/worker/render.py`):**
+   - `WHATSAPP_MAX_CHARS` (default: 3500, min: 100)
+   
+   **Worker Dedupe (`apps/worker/dedupe.py`):**
+   - `DEDUPE_DAYS` (default: 7, min: 1)
+   
+   **Worker Circuit Breaker (`apps/worker/circuit_breaker.py`):**
+   - `CIRCUIT_FAILURE_THRESHOLD` (default: 5, min: 1)
+   
+   **Worker Ollama (`apps/worker/llm/ollama_ensure.py`):**
+   - `OLLAMA_PULL_TIMEOUT_SECONDS` (default: 1800, min: 1) — 30 minutes
+   - `OLLAMA_PULL_MAX_RETRIES` (default: 6, min: 1)
+   - `OLLAMA_PULL_BACKOFF_SECONDS` (default: 20, min: 1)
+   
+   **Worker Ollama Client (`apps/worker/llm/ollama_client.py`):**
+   - `OLLAMA_MAX_JSON_RETRY` (default: 1, min: 0)
+   
+   **Collector (`apps/collector/main.py`):**
+   - `COLLECTOR_INTERVAL_MINUTES` or `COLLECTOR_INTERVAL` (default: 15, min: 1)
+   - `INGEST_LIMIT` (default: 50, min: 1)
+   - `TELEGRAM_SINCE_MINUTES` (default: 60, min: 1)
+   
+   See `apps/shared/env_helpers.py` for implementation details.
+
+5. Stop:
    ```bash
    docker compose down
    ```

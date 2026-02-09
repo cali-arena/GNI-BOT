@@ -10,14 +10,15 @@ from typing import Optional
 
 import httpx
 from apps.shared.config import REDIS_URL_DEFAULT, WHATSAPP_BOT_BASE_URL_DEFAULT
+from apps.shared.env_helpers import parse_int
 from apps.shared.secrets import get_secret
 
 from apps.api.wa_qr_cache import set_cached_qr
 
 logger = logging.getLogger(__name__)
 
-WA_KEEPALIVE_INTERVAL = int(get_secret("WA_KEEPALIVE_INTERVAL_SECONDS", "25"))
-WA_RECONNECT_BACKOFF = int(get_secret("WA_RECONNECT_BACKOFF_SECONDS", "30"))
+WA_KEEPALIVE_INTERVAL = env_int("WA_KEEPALIVE_INTERVAL_SECONDS", default=25)
+WA_RECONNECT_BACKOFF = env_int("WA_RECONNECT_BACKOFF_SECONDS", default=30)
 WA_QR_POLL_TIMEOUT = 90
 WA_QR_POLL_INTERVAL = 5
 
