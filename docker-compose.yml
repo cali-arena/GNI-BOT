@@ -154,7 +154,7 @@ services:
       context: apps/whatsapp-bot
       dockerfile: Dockerfile
     ports:
-      - "3100:3100"
+      - "0.0.0.0:3100:3100"
     environment:
       PORT: 3100
       AUTH_FOLDER: /data/wa-auth
