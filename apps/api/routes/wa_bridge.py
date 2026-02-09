@@ -17,15 +17,21 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from apps.api.settings_utils import env_int
 from apps.shared.config import WHATSAPP_BOT_BASE_URL_DEFAULT
 from apps.shared.secrets import get_secret
 
 logger = logging.getLogger(__name__)
 
+# Ensure bot base URL uses http://whatsapp-bot:3100 (not localhost/127.0.0.1)
 WA_BOT_BASE_URL = get_secret("WA_BOT_BASE_URL", WHATSAPP_BOT_BASE_URL_DEFAULT).rstrip("/")
+if not WA_BOT_BASE_URL or "localhost" in WA_BOT_BASE_URL or "127.0.0.1" in WA_BOT_BASE_URL:
+    WA_BOT_BASE_URL = WHATSAPP_BOT_BASE_URL_DEFAULT.rstrip("/")
+    logger.warning("wa_bridge: WA_BOT_BASE_URL contained localhost, using default: %s", WA_BOT_BASE_URL)
+
 WA_QR_BRIDGE_TOKEN = get_secret("WA_QR_BRIDGE_TOKEN", "").strip()
-WA_QR_TTL_SECONDS = int(get_secret("WA_QR_TTL_SECONDS", "120"))
-WA_QR_RATE_LIMIT_PER_MINUTE = int(get_secret("WA_QR_RATE_LIMIT_PER_MINUTE", "90"))
+WA_QR_TTL_SECONDS = env_int("WA_QR_TTL_SECONDS", default=120)
+WA_QR_RATE_LIMIT_PER_MINUTE = env_int("WA_QR_RATE_LIMIT_PER_MINUTE", default=90)
 WA_BOT_TIMEOUT_SECONDS = 5.0
 
 http_bearer = HTTPBearer(auto_error=False)
@@ -68,32 +74,51 @@ async def require_wa_bridge_token(
 
 
 async def _fetch_status() -> dict:
-    """Proxy to whatsapp-bot /health. Returns connected, status, lastDisconnectReason, server_time."""
+    """
+    Proxy to whatsapp-bot /status (not /health). 
+    Returns connected, status ("not_ready"|"qr_ready"|"connected"|"disconnected"), lastDisconnectReason, server_time.
+    """
     now = datetime.now(timezone.utc).isoformat()
     try:
         async with httpx.AsyncClient(timeout=WA_BOT_TIMEOUT_SECONDS) as client:
-            r = await client.get(f"{WA_BOT_BASE_URL}/health")
+            r = await client.get(f"{WA_BOT_BASE_URL}/status")
             r.raise_for_status()
             data = r.json()
     except httpx.TimeoutException:
-        logger.warning("wa_bridge: whatsapp-bot health timeout")
+        logger.warning("wa_bridge: whatsapp-bot status timeout")
         return {
             "connected": False,
-            "status": "timeout",
+            "status": "not_ready",
             "lastDisconnectReason": None,
             "server_time": now,
         }
     except Exception as e:
-        logger.warning("wa_bridge: whatsapp-bot health error: %s", type(e).__name__)
+        logger.warning("wa_bridge: whatsapp-bot status error: %s", type(e).__name__)
         return {
             "connected": False,
-            "status": "unreachable",
+            "status": "not_ready",
             "lastDisconnectReason": None,
             "server_time": now,
         }
+    
+    # Bot returns: { connected: bool, status: "connected|qr_ready|not_ready|disconnected", lastDisconnectReason, server_time }
+    # Use bot's status field directly (bot already maps it correctly)
+    bot_status = data.get("status", "disconnected")
+    bot_connected = data.get("connected", False)
+    
+    # Ensure status is one of the expected values
+    if bot_status not in ("connected", "qr_ready", "not_ready", "disconnected"):
+        # Fallback: use connected flag to determine status
+        if bot_connected:
+            status = "connected"
+        else:
+            status = "disconnected"
+    else:
+        status = bot_status
+    
     return {
-        "connected": data.get("connected", False),
-        "status": data.get("status", "unknown"),
+        "connected": bot_connected,
+        "status": status,
         "lastDisconnectReason": data.get("lastDisconnectReason"),
         "server_time": now,
     }
@@ -101,8 +126,8 @@ async def _fetch_status() -> dict:
 
 def _fetch_qr_sync() -> dict:
     """
-    Read Redis first; if miss, proxy to bot and cache on hit.
-    Returns: { "qr": str|null, "status": "qr_ready"|"not_ready", "ts": unix_ts?, "expires_in", "server_time" }
+    Fetch QR from bot with caching: Redis -> in-memory -> file -> bot.
+    Returns: { "qr": str|null, "status": "qr_ready"|"not_ready"|"connected", "ts": unix_ts?, "expires_in", "server_time" }
     """
     import time
     from apps.api.wa_qr_cache import get_cached_qr, set_cached_qr
@@ -110,7 +135,7 @@ def _fetch_qr_sync() -> dict:
     now = datetime.now(timezone.utc).isoformat()
     now_ts = time.time()
 
-    # 1) Check Redis first
+    # 1) Check cache (Redis -> in-memory -> file)
     cached = get_cached_qr()
     if cached:
         qr_str, ts = cached
@@ -122,7 +147,7 @@ def _fetch_qr_sync() -> dict:
             "server_time": now,
         }
 
-    # 2) Proxy to bot
+    # 2) Proxy to bot GET /qr
     try:
         import httpx
         with httpx.Client(timeout=WA_BOT_TIMEOUT_SECONDS) as client:
@@ -133,9 +158,24 @@ def _fetch_qr_sync() -> dict:
         logger.warning("wa_bridge: whatsapp-bot qr error: %s", type(e).__name__)
         return {"qr": None, "status": "not_ready", "expires_in": 0, "server_time": now}
 
+    bot_status = data.get("status", "not_ready")
     qr = data.get("qr")
-    if qr:
+    
+    # Map bot status to our status
+    if bot_status == "connected":
+        # Bot is connected, no QR needed
+        return {
+            "qr": None,
+            "status": "connected",
+            "expires_in": 0,
+            "server_time": now,
+        }
+    
+    if bot_status == "qr_ready" and qr:
+        # Bot has QR ready, cache it and return
+        # ALWAYS cache QR when received from bot
         set_cached_qr(qr, ttl=WA_QR_TTL_SECONDS)
+        logger.debug("wa_bridge: cached QR from bot (length: %d)", len(qr))
         return {
             "qr": qr,
             "status": "qr_ready",
@@ -143,9 +183,11 @@ def _fetch_qr_sync() -> dict:
             "expires_in": WA_QR_TTL_SECONDS,
             "server_time": now,
         }
+    
+    # Bot says not_ready or disconnected, keep polling
     return {
         "qr": None,
-        "status": "not_ready",
+        "status": bot_status if bot_status in ("not_ready", "disconnected") else "not_ready",
         "expires_in": 0,
         "server_time": now,
     }
@@ -158,28 +200,41 @@ async def _fetch_qr() -> dict:
 
 
 async def _do_reconnect() -> dict:
-    """Trigger whatsapp-bot to logout and reconnect, generating a new QR."""
+    """
+    Trigger whatsapp-bot to logout and reconnect, generating a new QR.
+    Non-blocking: triggers reconnect and returns quickly (< 2s).
+    QR will be available via polling /admin/wa/qr.
+    """
     now = datetime.now(timezone.utc).isoformat()
+    
+    # Trigger reconnect (fire-and-forget with short timeout)
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=2.0) as client:
             r = await client.post(f"{WA_BOT_BASE_URL}/reconnect")
             r.raise_for_status()
-            return r.json()
+            # Bot handles reconnect internally and returns quickly
+            # No need to wait here - return immediately
+            logger.info("wa_bridge: reconnect triggered successfully")
+            return {"ok": True, "message": "Reconnect triggered. Poll /admin/wa/qr for QR code.", "server_time": now}
     except httpx.TimeoutException:
-        logger.warning("wa_bridge: whatsapp-bot reconnect timeout")
-        return {"ok": False, "error": "timeout", "server_time": now}
+        # Even if timeout, reconnect may have been triggered
+        logger.info("wa_bridge: reconnect request sent (timeout OK, bot may be processing)")
+        return {"ok": True, "message": "Reconnect triggered. Poll /admin/wa/qr for QR code.", "server_time": now}
     except Exception as e:
         logger.warning("wa_bridge: whatsapp-bot reconnect error: %s", type(e).__name__)
         return {"ok": False, "error": str(e)[:100], "server_time": now}
 
 
-# --- /admin/wa/* router (unchanged behavior) ---
+# --- /admin/wa/* router: requires Bearer token (WA_QR_BRIDGE_TOKEN) ---
 router = APIRouter(prefix="/admin/wa", tags=["wa-bridge"], dependencies=[Depends(require_wa_bridge_token)])
 
 
 @router.get("/status")
 async def wa_status() -> dict:
-    """Proxy to whatsapp-bot /health."""
+    """
+    Get WhatsApp connection status.
+    Returns: {connected: bool, status: "not_ready"|"qr_ready"|"connected", lastDisconnectReason: str|null, server_time: str}
+    """
     return await _fetch_status()
 
 
