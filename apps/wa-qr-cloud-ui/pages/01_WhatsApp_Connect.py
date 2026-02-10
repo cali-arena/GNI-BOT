@@ -42,10 +42,10 @@ if not base:
     st.warning("Backend URL not set. Go to Home to set it.")
     st.switch_page("app.py")
 
-api_key = (get_config().get("API_KEY") or get_config().get("ADMIN_API_KEY") or "").strip()
-if not api_key:
-    st.error("Missing API key. Set X-API-Key.")
-    st.caption("Configure API_KEY or ADMIN_API_KEY in Streamlit secrets or env to call /admin/wa/* endpoints.")
+wa_token = (get_config().get("WA_QR_BRIDGE_TOKEN") or "").strip()
+if not wa_token:
+    st.error("Missing Authorization header")
+    st.caption("Configure **WA_QR_BRIDGE_TOKEN** in Streamlit Cloud Secrets (same value as WA_QR_BRIDGE_TOKEN on your VM .env).")
     st.stop()
 
 inject_app_css()
