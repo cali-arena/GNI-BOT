@@ -32,7 +32,7 @@ if not WA_BOT_BASE_URL or "localhost" in WA_BOT_BASE_URL or "127.0.0.1" in WA_BO
 WA_QR_BRIDGE_TOKEN = get_secret("WA_QR_BRIDGE_TOKEN", "").strip()
 WA_QR_TTL_SECONDS = env_int("WA_QR_TTL_SECONDS", default=120)
 WA_QR_RATE_LIMIT_PER_MINUTE = env_int("WA_QR_RATE_LIMIT_PER_MINUTE", default=90)
-WA_BOT_TIMEOUT_SECONDS = 5.0
+WA_BOT_TIMEOUT_SECONDS = 20.0  # Bot can take 10–30s to generate QR after reconnect
 
 http_bearer = HTTPBearer(auto_error=False)
 

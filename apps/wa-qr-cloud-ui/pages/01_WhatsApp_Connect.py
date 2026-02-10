@@ -224,7 +224,7 @@ if (
         st.rerun()
     else:
         st.session_state.wa_polling = False
-        st.session_state.wa_refresh_msg = "No QR yet after 2 minutes. Click **Reconnect** and wait, or check the bot is running on your VM (docker compose --profile whatsapp ps)."
+        st.session_state.wa_refresh_msg = "No QR after 2 minutes. Try: 1) Click **Reconnect** and wait again. 2) On VM run: docker compose --profile whatsapp ps (bot must be Up). 3) Ensure port 8000 is reachable from the internet (Streamlit Cloud must reach your API)."
 
 # --- Manual controls ---
 if not connected:
