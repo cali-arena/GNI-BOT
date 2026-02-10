@@ -236,7 +236,7 @@ def _wa_request(
 ) -> tuple[Optional[Any], Optional[str]]:
     """
     Shared WA request to /admin/wa/*: uses Authorization Bearer (WA_QR_BRIDGE_TOKEN).
-    Timeout (5s connect, 10s read), exponential backoff on 429/502/503/504.
+    Timeout (10s connect, 25s read) so slow bot/network don't fail; backoff on 429/502/503/504.
     For GET with throttle_seconds > 0, returns cached result.
     Returns (data, error_string).
     """
@@ -258,8 +258,8 @@ def _wa_request(
         return None, "API base URL not set"
     url = f"{base}{path}"
     headers = _headers(use_bearer=True)
-    connect_timeout = 5
-    read_timeout = 10
+    connect_timeout = 10
+    read_timeout = 25
     timeout = (connect_timeout, read_timeout)
 
     max_retries = 2

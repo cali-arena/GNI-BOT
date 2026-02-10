@@ -28,10 +28,10 @@ def _cached_status():
 def _cached_qr():
     return get_wa_qr()
 
-# Progressive poll intervals (seconds): 5s → 10s → 15s, capped at 15s. Max 12 polls ≈ 90s total.
-POLL_INTERVALS = [5, 5, 10, 10, 15, 15, 15, 15, 15, 15, 15, 15]
-POLL_MAX_WAIT = 90
-POLL_MAX_TICKS = 12
+# Progressive poll intervals (seconds). Max ~120s total so QR has time to appear.
+POLL_INTERVALS = [3, 5, 5, 8, 10, 12, 15, 15, 15, 15, 15, 15, 15]
+POLL_MAX_WAIT = 120
+POLL_MAX_TICKS = len(POLL_INTERVALS)
 
 st.set_page_config(page_title="GNI — WhatsApp Connect", layout="centered", initial_sidebar_state="expanded")
 base = (st.session_state.get("api_base_url") or "").strip().rstrip("/")
@@ -113,7 +113,7 @@ for i, step in enumerate(["Open WhatsApp on your phone", "Settings → Linked De
     st.markdown("%d. %s" % (i, step))
 
 if not connected and not st.session_state.wa_qr_string and not st.session_state.wa_connect_clicked:
-    st.info("👆 **Click Connect WhatsApp below** to start. QR appears within ~90 seconds.")
+    st.info("👆 **Click Connect WhatsApp below** to start. QR can take up to ~2 minutes to appear.")
 
 
 def _poll_one_tick() -> tuple[Optional[str], Optional[str], Optional[str]]:
@@ -224,7 +224,7 @@ if (
         st.rerun()
     else:
         st.session_state.wa_polling = False
-        st.session_state.wa_refresh_msg = "Timeout. Click **Refresh QR** or **Reconnect** to try again."
+        st.session_state.wa_refresh_msg = "No QR yet after 2 minutes. Click **Reconnect** and wait, or check the bot is running on your VM (docker compose --profile whatsapp ps)."
 
 # --- Manual controls ---
 if not connected:
