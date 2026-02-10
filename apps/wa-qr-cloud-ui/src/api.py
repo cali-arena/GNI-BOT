@@ -184,7 +184,7 @@ def post_auth_login(email: str, password: str) -> tuple[Optional[dict], Optional
         return None, "API base URL not set"
     url = f"{base}/auth/login"
     try:
-        r = requests.post(url, headers={"Content-Type": "application/json"}, json={"email": email, "password": password}, timeout=10)
+        r = requests.post(url, headers={"Content-Type": "application/json"}, json={"email": email, "password": password}, timeout=15)
         r.raise_for_status()
         return r.json() if r.content else None, None
     except requests.exceptions.HTTPError as e:
@@ -193,8 +193,12 @@ def post_auth_login(email: str, password: str) -> tuple[Optional[dict], Optional
         except Exception:
             detail = "Request failed"
         return None, str(detail)[:200]
-    except Exception:
-        return None, "Connection error."
+    except requests.exceptions.Timeout:
+        return None, "Backend took too long to respond. Check that the server is up and reachable."
+    except requests.exceptions.ConnectionError:
+        return None, "Cannot reach backend. Check that the URL is correct and port 8000 is open (Streamlit Cloud must reach your server)."
+    except Exception as e:
+        return None, f"Connection error: {getattr(e, 'message', str(e))[:120]}"
 
 
 def get_auth_me() -> tuple[Optional[dict], Optional[str]]:
