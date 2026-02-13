@@ -8,12 +8,25 @@ WA (WhatsApp) /admin/wa/* endpoints use Authorization: Bearer WA_QR_BRIDGE_TOKEN
 """
 import time
 from typing import Any, Optional
+from urllib.parse import urlencode
+
+
+def add_query(path: Optional[str], params: dict) -> str:
+    # ensure path is a string (avoid AttributeError on += in callers or old code paths)
+    path = (path or "").strip() or "/"
+    # remove None and empty values; coerce to str for urlencode
+    clean = {k: str(v) for k, v in params.items() if v is not None and v != ""}
+    return path if not clean else path + ("&" if "?" in path else "?") + urlencode(clean)
 
 
 # --- Client-side throttle: {cache_key: (timestamp, (data, error))} ---
 _wa_cache: dict[str, tuple[float, tuple[Any, Optional[str]]]] = {}
 WA_THROTTLE_STATUS = 8   # seconds (status cache)
 WA_THROTTLE_QR = 12      # seconds (QR cache)
+
+# --- Last request info for UI (safe: no tokens, URL only) ---
+_last_http_status: Optional[int] = None
+_last_request_url: Optional[str] = None
 
 
 def _get_config():
@@ -50,6 +63,14 @@ def _headers_jwt(token: Optional[str] = None) -> dict:
     return h
 
 
+def _get_timeout() -> int:
+    """Request timeout (connect + read) in seconds. From GNI_API_TIMEOUT env/secrets, default 10."""
+    try:
+        return int(_get_config().get("GNI_API_TIMEOUT") or 10)
+    except (TypeError, ValueError):
+        return 10
+
+
 def _base_url() -> str:
     """Backend base URL: session_state api_base_url first, then config (secrets/env). Never log."""
     out = (_get_config().get("GNI_API_BASE_URL") or "").strip().rstrip("/")
@@ -63,112 +84,182 @@ def _base_url() -> str:
     return out
 
 
-def api_get(path: str, *, timeout: int = 10, use_bearer: bool = True) -> tuple[Optional[Any], Optional[str]]:
+def _conn_err(msg: str, url: str) -> str:
+    """Build connection error message with safe URL (no tokens)."""
+    return f"{msg} Tried: {url}"
+
+
+def get_api_display_info() -> dict[str, Any]:
+    """Return safe info for UI: base_url, last_http_status, last_request_url. No secrets."""
+    return {
+        "base_url": _base_url(),
+        "last_http_status": _last_http_status,
+        "last_request_url": _last_request_url,
+    }
+
+
+def api_get(path: str, *, timeout: Optional[int] = None, use_bearer: bool = True) -> tuple[Optional[Any], Optional[str]]:
     """GET {base}{path}. Returns (data, error). On non-200 returns friendly error (no secrets)."""
     import requests
+    global _last_http_status, _last_request_url
     base = _base_url()
     if not base:
         return None, "API base URL not set"
     url = f"{base}{path}"
+    _last_request_url = url
+    to = (timeout if timeout is not None else _get_timeout())
     try:
-        r = requests.get(url, headers=_headers(use_bearer=use_bearer), timeout=timeout)
+        r = requests.get(url, headers=_headers(use_bearer=use_bearer), timeout=(to, to))
+        _last_http_status = r.status_code
         r.raise_for_status()
         return r.json() if r.content else None, None
     except requests.exceptions.HTTPError as e:
+        _last_http_status = e.response.status_code if e.response else None
         try:
             detail = e.response.json().get("detail", "Request failed")
         except Exception:
             detail = "Request failed"
-        if e.response.status_code == 401:
-            return None, "Authentication failed. Check your secrets."
-        if e.response.status_code == 404:
-            return None, "Endpoint not found."
-        return None, str(detail)[:200]
-    except requests.exceptions.Timeout:
-        return None, "Request timed out."
+        if e.response and e.response.status_code == 401:
+            return None, f"Authentication failed (401). Check your secrets."
+        if e.response and e.response.status_code == 404:
+            return None, f"Endpoint not found (404)."
+        return None, f"Request failed ({_last_http_status}): {str(detail)[:180]}"
+    except requests.exceptions.ConnectTimeout:
+        _last_http_status = None
+        return None, _conn_err("Connection error: connect timed out.", url)
+    except requests.exceptions.ReadTimeout:
+        _last_http_status = None
+        return None, _conn_err("Connection error: read timed out.", url)
+    except requests.exceptions.ConnectionError as e:
+        _last_http_status = None
+        reason = str(e).split("\n")[0][:80] if str(e) else "connection refused or unreachable"
+        return None, _conn_err(f"Connection error: {reason}.", url)
+    except requests.exceptions.RequestException as e:
+        _last_http_status = None
+        return None, _conn_err(f"Connection error: {str(e)[:80]}.", url)
     except Exception as e:
-        return None, "Connection error."
+        _last_http_status = None
+        return None, _conn_err(f"Connection error: {str(e)[:80]}.", url)
 
 
-def api_post(path: str, json_body: Optional[dict] = None, *, timeout: int = 10, use_bearer: bool = False) -> tuple[Optional[Any], Optional[str]]:
+def api_post(path: str, json_body: Optional[dict] = None, *, timeout: Optional[int] = None, use_bearer: bool = False) -> tuple[Optional[Any], Optional[str]]:
     """POST {base}{path}. Returns (data, error). use_bearer=True for WA bridge; False for API key (monitoring/posts)."""
     import requests
+    global _last_http_status, _last_request_url
     base = _base_url()
     if not base:
         return None, "API base URL not set"
     url = f"{base}{path}"
+    _last_request_url = url
+    to = (timeout if timeout is not None else _get_timeout())
     try:
-        r = requests.post(url, headers=_headers(use_bearer=use_bearer), json=json_body or {}, timeout=timeout)
+        r = requests.post(url, headers=_headers(use_bearer=use_bearer), json=json_body or {}, timeout=(to, to))
+        _last_http_status = r.status_code
         r.raise_for_status()
         return r.json() if r.content else {}, None
     except requests.exceptions.HTTPError as e:
+        _last_http_status = e.response.status_code if e.response else None
         try:
             detail = e.response.json().get("detail", "Request failed")
         except Exception:
             detail = "Request failed"
-        if e.response.status_code == 401:
-            return None, "Authentication failed. Check your secrets."
-        if e.response.status_code == 404:
-            return None, "Endpoint not found."
-        return None, str(detail)[:200]
-    except requests.exceptions.Timeout:
-        return None, "Request timed out."
+        if e.response and e.response.status_code == 401:
+            return None, "Authentication failed (401). Check your secrets."
+        if e.response and e.response.status_code == 404:
+            return None, "Endpoint not found (404)."
+        return None, f"Request failed ({_last_http_status}): {str(detail)[:180]}"
+    except requests.exceptions.ConnectTimeout:
+        _last_http_status = None
+        return None, _conn_err("Connection error: connect timed out.", url)
+    except requests.exceptions.ReadTimeout:
+        _last_http_status = None
+        return None, _conn_err("Connection error: read timed out.", url)
+    except requests.exceptions.ConnectionError as e:
+        _last_http_status = None
+        reason = str(e).split("\n")[0][:80] if str(e) else "connection refused or unreachable"
+        return None, _conn_err(f"Connection error: {reason}.", url)
+    except requests.exceptions.RequestException as e:
+        _last_http_status = None
+        return None, _conn_err(f"Connection error: {str(e)[:80]}.", url)
     except Exception as e:
-        return None, "Connection error."
+        _last_http_status = None
+        return None, _conn_err(f"Connection error: {str(e)[:80]}.", url)
 
 
-def api_get_jwt(path: str, *, timeout: int = 10, token: Optional[str] = None) -> tuple[Optional[Any], Optional[str]]:
+def api_get_jwt(path: str, *, timeout: Optional[int] = None, token: Optional[str] = None) -> tuple[Optional[Any], Optional[str]]:
     """GET with JWT from session (or passed token). For /auth/me, /whatsapp/*."""
     import requests
+    global _last_http_status, _last_request_url
     base = _base_url()
     if not base:
         return None, "API base URL not set"
     url = f"{base}{path}"
+    _last_request_url = url
+    to = (timeout if timeout is not None else _get_timeout())
     try:
-        r = requests.get(url, headers=_headers_jwt(token=token), timeout=timeout)
+        r = requests.get(url, headers=_headers_jwt(token=token), timeout=(to, to))
+        _last_http_status = r.status_code
         r.raise_for_status()
         return r.json() if r.content else None, None
     except requests.exceptions.HTTPError as e:
+        _last_http_status = e.response.status_code if e.response else None
         try:
             detail = e.response.json().get("detail", "Request failed")
         except Exception:
             detail = "Request failed"
-        if e.response.status_code == 401:
-            return None, "Invalid or expired token. Please log in again."
-        if e.response.status_code == 404:
-            return None, "Endpoint not found."
-        return None, str(detail)[:200]
-    except requests.exceptions.Timeout:
-        return None, "Request timed out."
-    except Exception:
-        return None, "Connection error."
+        if e.response and e.response.status_code == 401:
+            return None, "Invalid or expired token (401). Please log in again."
+        if e.response and e.response.status_code == 404:
+            return None, "Endpoint not found (404)."
+        return None, f"Request failed ({_last_http_status}): {str(detail)[:180]}"
+    except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout):
+        _last_http_status = None
+        return None, _conn_err("Connection error: timed out.", url)
+    except requests.exceptions.ConnectionError as e:
+        _last_http_status = None
+        reason = str(e).split("\n")[0][:80] if str(e) else "connection refused or unreachable"
+        return None, _conn_err(f"Connection error: {reason}.", url)
+    except Exception as e:
+        _last_http_status = None
+        return None, _conn_err(f"Connection error: {str(e)[:80]}.", url)
 
 
-def api_post_jwt(path: str, json_body: Optional[dict] = None, *, timeout: int = 10, token: Optional[str] = None) -> tuple[Optional[Any], Optional[str]]:
+def api_post_jwt(path: str, json_body: Optional[dict] = None, *, timeout: Optional[int] = None, token: Optional[str] = None) -> tuple[Optional[Any], Optional[str]]:
     """POST with JWT from session. For /auth/login, /whatsapp/connect."""
     import requests
+    global _last_http_status, _last_request_url
     base = _base_url()
     if not base:
         return None, "API base URL not set"
     url = f"{base}{path}"
+    _last_request_url = url
+    to = (timeout if timeout is not None else _get_timeout())
     try:
-        r = requests.post(url, headers=_headers_jwt(token=token), json=json_body or {}, timeout=timeout)
+        r = requests.post(url, headers=_headers_jwt(token=token), json=json_body or {}, timeout=(to, to))
+        _last_http_status = r.status_code
         r.raise_for_status()
         return r.json() if r.content else {}, None
     except requests.exceptions.HTTPError as e:
+        _last_http_status = e.response.status_code if e.response else None
         try:
             detail = e.response.json().get("detail", "Request failed")
         except Exception:
             detail = "Request failed"
-        if e.response.status_code == 401:
-            return None, "Invalid or expired token. Please log in again."
-        if e.response.status_code == 429:
-            return None, "Rate limit exceeded. Try again later."
-        return None, str(detail)[:200]
-    except requests.exceptions.Timeout:
-        return None, "Request timed out."
-    except Exception:
-        return None, "Connection error."
+        if e.response and e.response.status_code == 401:
+            return None, "Invalid or expired token (401). Please log in again."
+        if e.response and e.response.status_code == 429:
+            return None, "Rate limit exceeded (429). Try again later."
+        return None, f"Request failed ({_last_http_status}): {str(detail)[:180]}"
+    except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout):
+        _last_http_status = None
+        return None, _conn_err("Connection error: timed out.", url)
+    except requests.exceptions.ConnectionError as e:
+        _last_http_status = None
+        reason = str(e).split("\n")[0][:80] if str(e) else "connection refused or unreachable"
+        return None, _conn_err(f"Connection error: {reason}.", url)
+    except Exception as e:
+        _last_http_status = None
+        return None, _conn_err(f"Connection error: {str(e)[:80]}.", url)
 
 
 # --- Convenience (used by pages) ---
@@ -179,19 +270,29 @@ def get_health() -> tuple[Optional[dict], Optional[str]]:
 def post_auth_login(email: str, password: str) -> tuple[Optional[dict], Optional[str]]:
     """POST /auth/login. Returns (body with access_token, error). No auth header."""
     import requests
+    global _last_http_status, _last_request_url
     base = _base_url()
     if not base:
         return None, "API base URL not set"
     url = f"{base}/auth/login"
+    _last_request_url = url
+    to = _get_timeout()
     try:
+<<<<<<< HEAD
         r = requests.post(url, headers={"Content-Type": "application/json"}, json={"email": email, "password": password}, timeout=15)
+=======
+        r = requests.post(url, headers={"Content-Type": "application/json"}, json={"email": email, "password": password}, timeout=(to, to))
+        _last_http_status = r.status_code
+>>>>>>> d6f699f (fix(wa-qr-cloud-ui): avoid AttributeError in Monitoring - defensive add_query for path and urlencode)
         r.raise_for_status()
         return r.json() if r.content else None, None
     except requests.exceptions.HTTPError as e:
+        _last_http_status = e.response.status_code if e.response else None
         try:
             detail = e.response.json().get("detail", "Request failed")
         except Exception:
             detail = "Request failed"
+<<<<<<< HEAD
         return None, str(detail)[:200]
     except requests.exceptions.Timeout:
         return None, "Backend took too long to respond. Check that the server is up and reachable."
@@ -199,6 +300,19 @@ def post_auth_login(email: str, password: str) -> tuple[Optional[dict], Optional
         return None, "Cannot reach backend. Check that the URL is correct and port 8000 is open (Streamlit Cloud must reach your server)."
     except Exception as e:
         return None, f"Connection error: {getattr(e, 'message', str(e))[:120]}"
+=======
+        return None, f"Request failed ({_last_http_status}): {str(detail)[:180]}"
+    except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout):
+        _last_http_status = None
+        return None, _conn_err("Connection error: timed out.", url)
+    except requests.exceptions.ConnectionError as e:
+        _last_http_status = None
+        reason = str(e).split("\n")[0][:80] if str(e) else "connection refused or unreachable"
+        return None, _conn_err(f"Connection error: {reason}.", url)
+    except Exception as e:
+        _last_http_status = None
+        return None, _conn_err(f"Connection error: {str(e)[:80]}.", url)
+>>>>>>> d6f699f (fix(wa-qr-cloud-ui): avoid AttributeError in Monitoring - defensive add_query for path and urlencode)
 
 
 def get_auth_me() -> tuple[Optional[dict], Optional[str]]:
@@ -257,14 +371,22 @@ def _wa_request(
         if now - ts < throttle_seconds:
             return cached
 
+    global _last_http_status, _last_request_url
     base = _base_url()
     if not base:
         return None, "API base URL not set"
     url = f"{base}{path}"
+<<<<<<< HEAD
     headers = _headers(use_bearer=True)
     connect_timeout = 10
     read_timeout = 25
     timeout = (connect_timeout, read_timeout)
+=======
+    _last_request_url = url
+    headers = _headers(use_bearer=False)
+    to = _get_timeout()
+    timeout = (to, to)
+>>>>>>> d6f699f (fix(wa-qr-cloud-ui): avoid AttributeError in Monitoring - defensive add_query for path and urlencode)
 
     max_retries = 2
     for attempt in range(max_retries + 1):
@@ -282,11 +404,13 @@ def _wa_request(
             r.raise_for_status()
             data = r.json() if r.content else ({} if method == "POST" else None)
 
+            _last_http_status = r.status_code
             if method == "GET" and throttle_seconds > 0:
                 _wa_cache[cache_key] = (now, (data, None))
             return data, None
 
         except requests.exceptions.HTTPError as e:
+            _last_http_status = e.response.status_code if e.response else None
             code = e.response.status_code if e.response else 0
             if code in (429, 502, 503, 504) and attempt < max_retries:
                 delay = 2 ** attempt
@@ -302,12 +426,18 @@ def _wa_request(
                 return None, "Endpoint not found."
             if code == 429:
                 return None, "Rate limit exceeded. Try again in 30 seconds."
-            return None, str(detail)[:200]
+            return None, f"Request failed ({code}): {str(detail)[:180]}"
 
-        except requests.exceptions.Timeout:
-            return None, "Request timed out."
-        except Exception:
-            return None, "Connection error."
+        except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout):
+            _last_http_status = None
+            return None, _conn_err("Connection error: timed out.", url)
+        except requests.exceptions.ConnectionError as e:
+            _last_http_status = None
+            reason = str(e).split("\n")[0][:80] if str(e) else "connection refused or unreachable"
+            return None, _conn_err(f"Connection error: {reason}.", url)
+        except Exception as e:
+            _last_http_status = None
+            return None, _conn_err(f"Connection error: {str(e)[:80]}.", url)
 
     return None, "Request failed after retries."
 
@@ -352,39 +482,44 @@ def post_wa_reconnect() -> tuple[Optional[dict], Optional[str]]:
 
 
 def get_monitoring_status(tenant: Optional[str] = None) -> tuple[Optional[dict], Optional[str]]:
-    path = "/monitoring/status"
-    if tenant:
-        path += "?" + __import__("urllib.parse").urlencode({"tenant": tenant})
+    """GET /monitoring: worker/collector status, last run, queue health. Returns full body as status dict."""
+    path = add_query("/monitoring", {"tenant": tenant})
     return api_get(path, use_bearer=False)
 
 
 def get_monitoring_recent(limit: int = 20, tenant: Optional[str] = None) -> tuple[Optional[list], Optional[str]]:
-    params = {"limit": limit}
-    if tenant:
-        params["tenant"] = tenant
-    path = "/monitoring/recent?" + __import__("urllib.parse").urlencode(params)
-    data, err = api_get(path, use_bearer=False)
+    """GET /monitoring and return recent jobs list (same endpoint as status)."""
+    data, err = api_get(add_query("/monitoring", {"tenant": tenant}), use_bearer=False)
     if err:
         return None, err
-    if isinstance(data, list):
-        return data, None
-    if isinstance(data, dict) and "items" in data:
-        return data["items"], None
-    return data or [], None
+    if isinstance(data, dict) and "recent" in data:
+        return data["recent"], None
+    return [], None
 
 
 def post_monitoring_run(tenant: Optional[str] = None) -> tuple[Optional[dict], Optional[str]]:
     return api_post("/monitoring/run", json_body={"tenant": tenant} if tenant else None, use_bearer=False)
 
 
-def get_posts(status: str = "pending", limit: int = 20, tenant: Optional[str] = None) -> tuple[Optional[list], Optional[str]]:
+def get_posts(
+    status: str = "pending",
+    limit: int = 20,
+    offset: int = 0,
+    source: Optional[str] = None,
+    q: Optional[str] = None,
+    tenant: Optional[str] = None,
+) -> tuple[Optional[list], Optional[str]]:
+    """List posts: pending -> GET /review/pending; else GET /posts?limit=&offset=&source=&q=&status=."""
     if status == "pending":
         data, err = api_get("/review/pending", use_bearer=False)
     else:
-        params = {"status": status, "limit": limit}
-        if tenant:
-            params["tenant"] = tenant
-        path = "/posts?" + __import__("urllib.parse").urlencode(params)
+        path = add_query("/posts", {
+            "limit": limit,
+            "offset": offset,
+            "source": source or "",
+            "q": q or "",
+            "status": status,
+        })
         data, err = api_get(path, use_bearer=False)
     if err:
         return None, err
