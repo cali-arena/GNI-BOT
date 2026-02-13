@@ -5,7 +5,7 @@ import streamlit as st
 
 from src.auth import require_login
 from src.api import get_health, get_api_display_info, get_monitoring_status, get_monitoring_recent, post_monitoring_run
-from src.ui import inject_app_css, render_sidebar, render_api_error_hint
+from src.ui import inject_app_css, render_sidebar
 
 try:
     from src.ui import render_api_error_hint
