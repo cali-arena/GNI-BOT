@@ -45,10 +45,11 @@ if ($Full) {
         ssh @SSH_OPTS "${VM_USER}@${VM_HOST}" "chmod +x ${VM_PATH}/scripts/*.sh 2>/dev/null || true"
     }
 
-    # Sync API: wa_bridge, wa_public, wa_qr_cache, wa_keepalive, main
+    # Sync API: wa_bridge, wa_public, monitoring, wa_qr_cache, wa_keepalive, main
     $apiFiles = @(
         "apps\api\routes\wa_bridge.py",
         "apps\api\routes\wa_public.py",
+        "apps\api\routes\monitoring.py",
         "apps\api\wa_qr_cache.py",
         "apps\api\wa_keepalive.py",
         "apps\api\main.py"

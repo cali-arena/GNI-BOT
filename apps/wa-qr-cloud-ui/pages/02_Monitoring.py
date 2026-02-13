@@ -4,7 +4,7 @@ Monitoring — scraping/jobs. Login required. Client = own data; admin = all.
 import streamlit as st
 
 from src.auth import require_login
-from src.api import get_health, get_api_display_info, get_monitoring_status, get_monitoring_recent, post_monitoring_run
+from src.api import get_health, get_api_display_info, get_monitoring_status, get_monitoring_recent
 from src.ui import inject_app_css, render_sidebar
 
 try:
@@ -76,28 +76,7 @@ try:
     else:
         st.info("No recent jobs.")
 
-    st.divider()
-    st.subheader("Run scraping now")
-    if "_confirm_run" not in st.session_state:
-        st.session_state._confirm_run = False
-    if st.button("Run now ▶️", key="monitoring_run"):
-        st.session_state._confirm_run = True
-    if st.session_state._confirm_run:
-        st.caption("Confirm run? This triggers a scraping job.")
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("Yes, run", key="run_yes"):
-                _, err = post_monitoring_run(tenant=tenant)
-                st.session_state._confirm_run = False
-                if err:
-                    st.error(err)
-                else:
-                    st.success("Run triggered.")
-                st.rerun()
-        with c2:
-            if st.button("Cancel", key="run_cancel"):
-                st.session_state._confirm_run = False
-                st.rerun()
+    st.caption("Scraping runs 24/7 on the backend. Use **Posts** to review and publish.")
 except Exception as e:
     st.error(f"Monitoring error: {e}")
     render_api_error_hint(get_api_display_info())

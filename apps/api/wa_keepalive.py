@@ -9,8 +9,8 @@ import time
 from typing import Optional
 
 import httpx
+from apps.api.settings_utils import env_int
 from apps.shared.config import REDIS_URL_DEFAULT, WHATSAPP_BOT_BASE_URL_DEFAULT
-from apps.shared.env_helpers import parse_int
 from apps.shared.secrets import get_secret
 
 from apps.api.wa_qr_cache import set_cached_qr
