@@ -1,15 +1,14 @@
 """
 API wrapper: api_get / api_post with base URL and auth. Friendly errors; never log secrets.
 
-WA (WhatsApp) endpoints use public /wa/* with X-API-Key:
-- Configurable base path via WA_API_PREFIX (default /wa)
-- Exponential backoff only on transient errors (429, 502, 503, 504)
-- Client-side throttling: same GET endpoint < N seconds ago returns cached result
+WA (WhatsApp) /admin/wa/* endpoints use Authorization: Bearer WA_QR_BRIDGE_TOKEN.
+- Set WA_QR_BRIDGE_TOKEN in Streamlit secrets (same as on VM .env).
+- Exponential backoff on transient errors (429, 502, 503, 504).
+- Client-side throttling: same GET endpoint < N seconds ago returns cached result.
 """
 import time
 from typing import Any, Optional
-# Explicit import required: __import__('urllib.parse') returns the top-level 'urllib' module,
-# not urllib.parse, so .urlencode would raise AttributeError on the Monitoring page.
+# Explicit import: avoid AttributeError on Monitoring page (urlencode)
 from urllib.parse import urlencode
 
 
@@ -332,13 +331,12 @@ def get_wa_status_user() -> tuple[Optional[dict], Optional[str]]:
 
 
 def _wa_paths() -> tuple[str, str, str]:
-    """Return (status_path, qr_path, reconnect_path) based on WA_API_PREFIX (default /wa)."""
-    prefix = (_get_config().get("WA_API_PREFIX") or "/wa").strip().rstrip("/") or "/wa"
-    reconnect_segment = "connect" if prefix == "/wa" else "reconnect"
+    """Return (status_path, qr_path, reconnect_path) for /admin/wa/* endpoints."""
+    # Always use /admin/wa/* endpoints with X-API-Key
     return (
-        f"{prefix}/status",
-        f"{prefix}/qr",
-        f"{prefix}/{reconnect_segment}",
+        "/admin/wa/status",
+        "/admin/wa/qr",
+        "/admin/wa/reconnect",
     )
 
 
@@ -350,15 +348,16 @@ def _wa_request(
     throttle_seconds: float = 0,
 ) -> tuple[Optional[Any], Optional[str]]:
     """
-    Shared WA request to /wa/*: uses X-API-Key. Timeout (5s connect, 10s read), exponential
-    backoff on 429/502/503/504. For GET with throttle_seconds > 0, returns cached result.
+    Shared WA request to /admin/wa/*: uses Authorization Bearer (WA_QR_BRIDGE_TOKEN).
+    Timeout (10s connect, 25s read) so slow bot/network don't fail; backoff on 429/502/503/504.
+    For GET with throttle_seconds > 0, returns cached result.
     Returns (data, error_string).
     """
     import requests
 
-    api_key = (_get_config().get("API_KEY") or _get_config().get("ADMIN_API_KEY") or "").strip()
-    if not api_key:
-        return None, "Missing API key. Set X-API-Key."
+    token = (_get_config().get("WA_QR_BRIDGE_TOKEN") or "").strip()
+    if not token:
+        return None, "Missing Authorization header"
 
     cache_key = f"{method} {path}"
     now = time.time()
@@ -410,7 +409,7 @@ def _wa_request(
             except Exception:
                 detail = "Request failed"
             if code == 401:
-                return None, "Unauthorized (check API key)."
+                return None, "Unauthorized (check WA_QR_BRIDGE_TOKEN in Streamlit secrets)."
             if code == 404:
                 return None, "Endpoint not found."
             if code == 429:

@@ -61,7 +61,10 @@ async def require_auth(
         return
     if credentials and credentials.credentials and _verify_jwt(credentials.credentials):
         return
-    raise HTTPException(status_code=401, detail="Unauthorized")
+    raise HTTPException(
+        status_code=401,
+        detail="Unauthorized: missing or invalid X-API-Key header or Bearer token"
+    )
 
 
 def create_token(subject: str = "api") -> str:

@@ -66,6 +66,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
     env_file: .env
+    volumes:
+      - ./data/wa-auth:/app/data/wa-auth
     depends_on:
       postgres:
         condition: service_healthy
@@ -99,6 +101,7 @@ services:
     volumes:
       - ./data/telethon:/data/telethon
       - ./data:/app/data:ro
+      - ./data/wa-auth:/app/data/wa-auth
     depends_on:
       postgres:
         condition: service_healthy
@@ -150,6 +153,8 @@ services:
     build:
       context: apps/whatsapp-bot
       dockerfile: Dockerfile
+    ports:
+      - "0.0.0.0:3100:3100"
     environment:
       PORT: 3100
       AUTH_FOLDER: /data/wa-auth
@@ -159,12 +164,11 @@ services:
       - ./data/wa-auth:/data/wa-auth
     networks:
       - internal
-    # No ports: internal only (API proxies /admin/wa/* via QR bridge)
     healthcheck:
       test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:3100/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))\" || exit 1"]
-      interval: 15s
+      interval: 30s
       timeout: 5s
-      retries: 5
+      retries: 3
       start_period: 30s
     restart: unless-stopped
     profiles:

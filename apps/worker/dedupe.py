@@ -13,9 +13,10 @@ from typing import Optional
 from apps.collector.normalize import canonicalize_url  # noqa: F401
 
 from apps.api.db.models import Item
+from apps.shared.env_helpers import parse_int
 
 # Configurable window (days); only treat as duplicate if same fingerprint exists with created_at >= now - DEDUPE_DAYS
-DEDUPE_DAYS = int(os.environ.get("DEDUPE_DAYS", "7"))
+DEDUPE_DAYS = get_int_env("DEDUPE_DAYS", default=7)
 # Policy: strict (exact fingerprint only) | relaxed (title similarity, uses rapidfuzz if available)
 DEDUPE_POLICY = (os.environ.get("DEDUPE_POLICY", "strict") or "strict").lower()
 

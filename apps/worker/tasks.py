@@ -25,6 +25,7 @@ from sqlalchemy import func
 
 from apps.api.db import SessionLocal, init_db
 from apps.shared.config import ConfigError, validate_config
+from apps.shared.env_helpers import parse_int
 from apps.shared.env_validation import EnvValidationError, validate_env
 from apps.api.db.models import DeadLetterQueue, Draft, EventsLog, Item, Publication
 from apps.api.settings import get_settings
@@ -62,10 +63,10 @@ def _log_info(msg: str, **kw: Any) -> None:
         print(f"{msg} {kw}" if kw else msg)
 
 
-RUN_EVERY_MINUTES = int(os.environ.get("RUN_EVERY_MINUTES", "15"))
-TELEGRAM_SINCE_MINUTES = int(os.environ.get("TELEGRAM_SINCE_MINUTES", "60"))
-PUBLISH_MAX_WORKERS = int(os.environ.get("PUBLISH_MAX_WORKERS", "4"))
-MAX_PIPELINE_ATTEMPTS = int(os.environ.get("MAX_PIPELINE_ATTEMPTS", "3"))
+RUN_EVERY_MINUTES = get_int_env("RUN_EVERY_MINUTES", default=15)
+TELEGRAM_SINCE_MINUTES = get_int_env("TELEGRAM_SINCE_MINUTES", default=60)
+PUBLISH_MAX_WORKERS = get_int_env("PUBLISH_MAX_WORKERS", default=4)
+MAX_PIPELINE_ATTEMPTS = get_int_env("MAX_PIPELINE_ATTEMPTS", default=3)
 DRY_RUN = os.environ.get("DRY_RUN", "").lower() in ("1", "true", "yes")
 
 # Serialize rate limit check to avoid Redis race; each worker acquires before check+increment

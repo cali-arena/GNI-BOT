@@ -19,6 +19,7 @@ try:
 except ImportError:
     Session = None  # type: ignore
 
+from apps.shared.env_helpers import parse_int
 from apps.shared.secrets import get_secret
 
 MAKE_CHANNEL = "make"
@@ -36,7 +37,7 @@ def _get_timeout() -> float:
 
 
 def _get_max_attempts() -> int:
-    return int(get_secret("MAKE_WEBHOOK_MAX_ATTEMPTS", "5"))
+    return parse_int(get_secret("MAKE_WEBHOOK_MAX_ATTEMPTS", ""), default=5, min_val=1, name="MAKE_WEBHOOK_MAX_ATTEMPTS")
 
 
 def _get_backoff_base() -> float:

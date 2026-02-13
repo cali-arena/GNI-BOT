@@ -9,6 +9,7 @@ from typing import Optional
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from apps.api.settings_utils import env_int
 from apps.shared.secrets import get_secret
 
 # Paths that skip rate limiting (health, metrics)
@@ -27,9 +28,9 @@ def _get_redis():
         return None
 
 
-API_RATE_LIMIT_PER_MINUTE = int(os.environ.get("API_RATE_LIMIT_PER_MINUTE", "60"))
-API_RATE_LIMIT_PER_HOUR = int(os.environ.get("API_RATE_LIMIT_PER_HOUR", "1000"))
-API_MAX_BODY_SIZE = int(os.environ.get("API_MAX_BODY_SIZE", "65536"))  # 64KB
+API_RATE_LIMIT_PER_MINUTE = env_int("API_RATE_LIMIT_PER_MINUTE", default=60)
+API_RATE_LIMIT_PER_HOUR = env_int("API_RATE_LIMIT_PER_HOUR", default=1000)
+API_MAX_BODY_SIZE = env_int("API_MAX_BODY_SIZE", default=65536)  # 64KB default
 
 
 def _client_identifier(request: Request) -> str:
