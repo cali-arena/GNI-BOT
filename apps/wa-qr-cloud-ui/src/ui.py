@@ -93,6 +93,12 @@ def inject_app_css() -> None:
     st.markdown(APP_CSS, unsafe_allow_html=True)
 
 
+def render_api_error_hint(display_info: dict | None = None) -> None:
+    """Optional hint when API calls fail (e.g. show base URL). No-op if not used."""
+    if display_info and display_info.get("base_url"):
+        st.caption(f"Backend: `{display_info['base_url']}` — check that it is reachable from Streamlit Cloud.")
+
+
 def render_sidebar(
     role: str,
     current_page: CurrentPage,
