@@ -44,6 +44,18 @@ def _get_config():
     return get_config()
 
 
+def _get_wa_token() -> str:
+    """WA bridge token: session_state first (UI paste), then config (env/secrets). Never log or return to caller for display."""
+    try:
+        import streamlit as st
+        t = (st.session_state.get("wa_qr_bridge_token") or "").strip()
+        if t:
+            return t
+    except Exception:
+        pass
+    return (_get_config().get("WA_QR_BRIDGE_TOKEN") or "").strip()
+
+
 def _headers(use_bearer: bool = True) -> dict:
     cfg = _get_config()
     h = {"Content-Type": "application/json"}
@@ -356,7 +368,7 @@ def _wa_request(
     """
     import requests
 
-    token = (_get_config().get("WA_QR_BRIDGE_TOKEN") or "").strip()
+    token = _get_wa_token()
     if not token:
         return None, "Missing Authorization header"
 
@@ -373,7 +385,7 @@ def _wa_request(
         return None, "API base URL not set"
     url = f"{base}{path}"
     _last_request_url = url
-    headers = _headers(use_bearer=False)
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
     to = _get_timeout()
     timeout = (to, to)
 
@@ -410,7 +422,9 @@ def _wa_request(
             except Exception:
                 detail = "Request failed"
             if code == 401:
-                return None, "Unauthorized (check WA_QR_BRIDGE_TOKEN in Streamlit secrets)."
+                return None, "Unauthorized (check WA_QR_BRIDGE_TOKEN in Streamlit secrets or paste below)."
+            if code == 403:
+                return None, "Forbidden (invalid or missing WA_QR_BRIDGE_TOKEN)."
             if code == 404:
                 return None, "Endpoint not found."
             if code == 429:
