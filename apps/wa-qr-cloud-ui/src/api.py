@@ -8,15 +8,25 @@ WA (WhatsApp) endpoints use public /wa/* with X-API-Key:
 """
 import time
 from typing import Any, Optional
+# Explicit import required: __import__('urllib.parse') returns the top-level 'urllib' module,
+# not urllib.parse, so .urlencode would raise AttributeError on the Monitoring page.
 from urllib.parse import urlencode
 
 
-def add_query(path: Optional[str], params: dict) -> str:
-    # ensure path is a string (avoid AttributeError on += in callers or old code paths)
+def _append_query(path: str, params: dict) -> str:
+    """Build path + querystring safely. Only appends when params have truthy values; uses '&' if '?' already in path."""
     path = (path or "").strip() or "/"
-    # remove None and empty values; coerce to str for urlencode
-    clean = {k: str(v) for k, v in params.items() if v is not None and v != ""}
+    clean = {}
+    for k, v in params.items():
+        if v is None or v == "":
+            continue
+        clean[k] = str(v) if not isinstance(v, str) else v
     return path if not clean else path + ("&" if "?" in path else "?") + urlencode(clean)
+
+
+def add_query(path: Optional[str], params: dict) -> str:
+    """Public helper for URL query building. Delegates to _append_query for consistent behavior."""
+    return _append_query(path or "", params)
 
 
 # --- Client-side throttle: {cache_key: (timestamp, (data, error))} ---
@@ -462,13 +472,15 @@ def post_wa_reconnect() -> tuple[Optional[dict], Optional[str]]:
 
 def get_monitoring_status(tenant: Optional[str] = None) -> tuple[Optional[dict], Optional[str]]:
     """GET /monitoring: worker/collector status, last run, queue health. Returns full body as status dict."""
-    path = add_query("/monitoring", {"tenant": tenant})
+    t = (tenant if isinstance(tenant, str) else str(tenant)) if tenant is not None else None
+    path = _append_query("/monitoring", {"tenant": t})
     return api_get(path, use_bearer=False)
 
 
 def get_monitoring_recent(limit: int = 20, tenant: Optional[str] = None) -> tuple[Optional[list], Optional[str]]:
     """GET /monitoring and return recent jobs list (same endpoint as status)."""
-    data, err = api_get(add_query("/monitoring", {"tenant": tenant}), use_bearer=False)
+    t = (tenant if isinstance(tenant, str) else str(tenant)) if tenant is not None else None
+    data, err = api_get(_append_query("/monitoring", {"tenant": t}), use_bearer=False)
     if err:
         return None, err
     if isinstance(data, dict) and "recent" in data:
@@ -477,7 +489,8 @@ def get_monitoring_recent(limit: int = 20, tenant: Optional[str] = None) -> tupl
 
 
 def post_monitoring_run(tenant: Optional[str] = None) -> tuple[Optional[dict], Optional[str]]:
-    return api_post("/monitoring/run", json_body={"tenant": tenant} if tenant else None, use_bearer=False)
+    t = (tenant if isinstance(tenant, str) else str(tenant)) if tenant is not None else None
+    return api_post("/monitoring/run", json_body={"tenant": t} if t else None, use_bearer=False)
 
 
 def get_posts(
