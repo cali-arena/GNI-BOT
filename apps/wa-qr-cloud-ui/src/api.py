@@ -8,7 +8,8 @@ WA (WhatsApp) /admin/wa/* endpoints use Authorization: Bearer WA_QR_BRIDGE_TOKEN
 """
 import time
 from typing import Any, Optional
-# Explicit import: avoid AttributeError on Monitoring page (urlencode)
+# Explicit import required: __import__('urllib.parse') returns the top-level 'urllib' module,
+# not urllib.parse, so .urlencode would raise AttributeError on the Monitoring page.
 from urllib.parse import urlencode
 
 
