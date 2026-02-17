@@ -39,8 +39,10 @@ def has_seed_for_legacy() -> bool:
 
 
 def get_config() -> dict[str, Any]:
-    """Return full config dict. GNI_API_BASE_URL optional (empty OK)."""
-    base_url = _get("GNI_API_BASE_URL", "").rstrip("/")
+    """Return full config dict. API_BASE_URL/GNI_API_BASE_URL optional; default http://api:8000."""
+    base_url = _get("API_BASE_URL", "") or _get("GNI_API_BASE_URL", "").rstrip("/")
+    if not base_url:
+        base_url = "http://api:8000"
     # Always use /admin/wa/* endpoints (WA_API_PREFIX ignored)
     wa_prefix = "/admin/wa"
     token = _get("WA_QR_BRIDGE_TOKEN")
@@ -53,6 +55,7 @@ def get_config() -> dict[str, Any]:
     except ValueError:
         auto_refresh = 3
     return {
+        "API_BASE_URL": base_url,
         "GNI_API_BASE_URL": base_url,
         "WA_API_PREFIX": wa_prefix,
         "WA_QR_BRIDGE_TOKEN": token,

@@ -12,8 +12,8 @@ from typing import Any, Optional
 
 # --- Client-side throttle: {cache_key: (timestamp, (data, error))} ---
 _wa_cache: dict[str, tuple[float, tuple[Any, Optional[str]]]] = {}
-WA_THROTTLE_STATUS = 8   # seconds (status cache)
-WA_THROTTLE_QR = 12      # seconds (QR cache)
+WA_THROTTLE_STATUS = 4   # seconds (status cache; aligns with 3–5s polling)
+WA_THROTTLE_QR = 8       # seconds (QR cache)
 
 
 def _get_config():
@@ -51,8 +51,9 @@ def _headers_jwt(token: Optional[str] = None) -> dict:
 
 
 def _base_url() -> str:
-    """Backend base URL: session_state api_base_url first, then config (secrets/env). Never log."""
-    out = (_get_config().get("GNI_API_BASE_URL") or "").strip().rstrip("/")
+    """Backend base URL: session_state first, then API_BASE_URL/GNI_API_BASE_URL (default http://api:8000)."""
+    cfg = _get_config()
+    out = (cfg.get("API_BASE_URL") or cfg.get("GNI_API_BASE_URL") or "http://api:8000").strip().rstrip("/")
     try:
         import streamlit as st
         session_url = (st.session_state.get("api_base_url") or "").strip().rstrip("/")
@@ -196,7 +197,7 @@ def post_auth_login(email: str, password: str) -> tuple[Optional[dict], Optional
     except requests.exceptions.Timeout:
         return None, "Backend took too long to respond. Check that the server is up and reachable."
     except requests.exceptions.ConnectionError:
-        return None, "Cannot reach backend. Check that the URL is correct and port 8000 is open (Streamlit Cloud must reach your server)."
+        return None, "Cannot reach backend. Check that the URL is correct and the server is reachable (e.g. use port 80 if 8000 is blocked)."
     except Exception as e:
         return None, f"Connection error: {getattr(e, 'message', str(e))[:120]}"
 
@@ -222,8 +223,7 @@ def get_wa_status_user() -> tuple[Optional[dict], Optional[str]]:
 
 
 def _wa_paths() -> tuple[str, str, str]:
-    """Return (status_path, qr_path, reconnect_path) for /admin/wa/* endpoints."""
-    # Always use /admin/wa/* endpoints with X-API-Key
+    """Return (status_path, qr_path, reconnect_path). Uses /admin/wa/* with Bearer WA_QR_BRIDGE_TOKEN."""
     return (
         "/admin/wa/status",
         "/admin/wa/qr",
@@ -326,7 +326,7 @@ def get_wa_status() -> tuple[Optional[dict], Optional[str]]:
         return None, err
     if not isinstance(data, dict):
         return {"connected": False, "status": "unknown"}, None
-    connected = data.get("connected", False) or data.get("status") == "open"
+    connected = data.get("connected", False) or data.get("status") in ("open", "connected")
     return {**data, "connected": connected}, None
 
 
