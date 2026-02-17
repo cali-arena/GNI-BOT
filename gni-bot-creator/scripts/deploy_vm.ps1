@@ -89,6 +89,32 @@ if ($Full) {
     } else {
         Write-Host "Warning: whatsapp-bot not found at $waBot" -ForegroundColor Yellow
     }
+
+    # Sync wa-qr-cloud-ui (Streamlit) from GNI so codex UI changes (429/polling) are deployed
+    $waQrUi = Join-Path $GNIRoot "apps\wa-qr-cloud-ui"
+    if (Test-Path $waQrUi) {
+        Write-Host "Syncing wa-qr-cloud-ui..."
+        $src = ($waQrUi -replace '\\', '/') + "/"
+        $dest = "${VM_USER}@${VM_HOST}:${VM_PATH}/apps/wa-qr-cloud-ui/"
+        $rsyncOk = $false
+        try { $null = Get-Command rsync -ErrorAction Stop; & rsync -avz --exclude=.git $src $dest 2>$null; $rsyncOk = ($LASTEXITCODE -eq 0) } catch {}
+        if (-not $rsyncOk) {
+            $tmp = Join-Path $env:TEMP "gni-waqr-ui-$(Get-Random)"
+            New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+            robocopy $waQrUi $tmp /E /XD .git /NFL /NDL /NJH /NJS | Out-Null
+            ssh @SSH_OPTS "${VM_USER}@${VM_HOST}" "mkdir -p ${VM_PATH}/apps/wa-qr-cloud-ui"
+            Get-ChildItem $tmp -Force | ForEach-Object {
+                $name = $_.Name
+                if ($name -eq "." -or $name -eq "..") { return }
+                scp @SSH_OPTS -r $_.FullName "${VM_USER}@${VM_HOST}:${VM_PATH}/apps/wa-qr-cloud-ui/"
+            }
+            Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+            Write-Host "  (used robocopy+scp fallback)" -ForegroundColor Gray
+        }
+    } else {
+        Write-Host "Warning: wa-qr-cloud-ui not found at $waQrUi" -ForegroundColor Yellow
+    }
+
     Write-Host "Rebuilding all services..."
     ssh @SSH_OPTS "${VM_USER}@${VM_HOST}" "cd $VM_PATH; docker compose build; docker compose --profile whatsapp up -d"
 } else {

@@ -13,22 +13,24 @@ from typing import Optional
 
 import streamlit as st
 
-from src.api import clear_wa_cache, get_wa_qr, get_wa_status, post_wa_reconnect
+from src.api import clear_wa_cache, get_wa_netcheck, get_wa_qr, get_wa_status, post_wa_reconnect
 from src.ui import inject_app_css, render_sidebar
 from src.config import get_config
 
 # --- Cached API wrappers (token is read inside api.py from session_state/config) ---
-@st.cache_data(ttl=8)
+@st.cache_data(ttl=12)
 def _cached_status():
     return get_wa_status()
 
-@st.cache_data(ttl=12)
+@st.cache_data(ttl=15)
 def _cached_qr():
     return get_wa_qr()
 
-POLL_INTERVALS = [3, 5, 5, 8, 10, 12, 15, 15, 15, 15, 15, 15, 15]
+POLL_INTERVALS = [5, 8, 10, 12, 15, 15, 20, 20, 20, 20]
 POLL_MAX_WAIT = 120
 POLL_MAX_TICKS = len(POLL_INTERVALS)
+NOT_READY_WARN_THRESHOLD_SEC = 90  # Show block warning after not_ready for this long
+RATE_LIMIT_BACKOFF_SECONDS = 30
 
 st.set_page_config(page_title="GNI — WhatsApp Connect", layout="centered", initial_sidebar_state="expanded")
 inject_app_css()
@@ -54,6 +56,8 @@ for key, default in [
     ("wa_qr_bridge_token", ""),
     ("wa_auto_refresh", False),
     ("wa_auto_refresh_interval", 10),
+    ("wa_not_ready_since", None),
+    ("wa_rate_limit_until", 0.0),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -109,6 +113,10 @@ if is_auth_error:
     _show_token_panel("invalid")
     st.stop()
 
+if status_err and ("429" in status_err or "Rate limit" in status_err):
+    st.session_state.wa_rate_limit_until = time.time() + RATE_LIMIT_BACKOFF_SECONDS
+    st.session_state.wa_auto_refresh_interval = max(int(st.session_state.wa_auto_refresh_interval or 10), 30)
+
 # --- Normal page content ---
 connected = False
 status_detail = "disconnected"
@@ -117,6 +125,26 @@ if isinstance(status_data, dict):
     connected = status_data.get("connected") or (status_data.get("status") or "").strip().lower() == "connected"
     status_detail = (status_data.get("status") or "disconnected").strip().lower()
     last_reason = status_data.get("lastDisconnectReason")
+    if status_detail == "disconnected":
+        st.session_state.wa_auto_refresh_interval = max(int(st.session_state.wa_auto_refresh_interval or 10), 15)
+
+# Track not_ready duration for block warning
+if status_detail in ("not_ready", "disconnected") and not connected:
+    if st.session_state.wa_not_ready_since is None:
+        st.session_state.wa_not_ready_since = time.time()
+else:
+    st.session_state.wa_not_ready_since = None
+
+# Fetch netcheck (connectivity to WhatsApp from bot container)
+netcheck_data, netcheck_err = get_wa_netcheck()
+netcheck_ok = isinstance(netcheck_data, dict) and netcheck_data.get("ok") is True
+show_block_warning = False
+if netcheck_data and isinstance(netcheck_data, dict) and netcheck_data.get("ok") is False:
+    show_block_warning = True
+elif status_detail in ("not_ready", "disconnected") and st.session_state.wa_not_ready_since:
+    elapsed = time.time() - st.session_state.wa_not_ready_since
+    if elapsed >= NOT_READY_WARN_THRESHOLD_SEC:
+        show_block_warning = True
 
 # --- Header ---
 _logo = Path(__file__).parent.parent / "assets" / "whatsapp-logo.webp"
@@ -140,6 +168,12 @@ else:
     st.info("⚪ **Disconnected** — Click **Connect WhatsApp** to show a QR code.")
 if last_reason:
     st.caption("Last disconnect: " + str(last_reason))
+
+if show_block_warning and not connected:
+    st.warning(
+        "**Your server IP/network appears blocked by WhatsApp.** "
+        "Recommended: use **Telegram** or **Make webhook** for delivery."
+    )
 
 if token_from_env:
     st.caption("Using token from environment.")
@@ -165,10 +199,14 @@ with btn_col1:
         st.session_state.wa_poll_started_at = time.time()
         st.session_state.wa_poll_count = 0
         st.session_state.wa_paused = False
+        st.session_state.wa_not_ready_since = None
         _, err = post_wa_reconnect()
         if err:
             st.session_state.wa_polling = False
             st.session_state.wa_refresh_msg = err
+            if "429" in err or "Rate limit" in err:
+                st.session_state.wa_rate_limit_until = time.time() + RATE_LIMIT_BACKOFF_SECONDS
+                st.session_state.wa_auto_refresh_interval = max(int(st.session_state.wa_auto_refresh_interval or 10), 30)
         else:
             st.session_state.wa_refresh_msg = None
         st.rerun()
@@ -178,6 +216,9 @@ with btn_col2:
         qr_data, qr_err = get_wa_qr(force_refresh=True)
         if qr_err:
             st.session_state.wa_refresh_msg = qr_err
+            if "429" in qr_err or "Rate limit" in qr_err:
+                st.session_state.wa_rate_limit_until = time.time() + RATE_LIMIT_BACKOFF_SECONDS
+                st.session_state.wa_auto_refresh_interval = max(int(st.session_state.wa_auto_refresh_interval or 10), 30)
         elif isinstance(qr_data, dict) and qr_data.get("qr"):
             st.session_state.wa_qr_string = qr_data.get("qr")
             st.session_state.wa_last_refresh = datetime.now().strftime("%H:%M:%S")
@@ -193,7 +234,7 @@ with ar_col1:
     auto_refresh = st.checkbox("Auto-refresh status", value=st.session_state.wa_auto_refresh, key="wa_auto_refresh_cb")
     st.session_state.wa_auto_refresh = auto_refresh
 with ar_col2:
-    opts = [5, 10, 15]
+    opts = [10, 15, 30]
     cur = st.session_state.wa_auto_refresh_interval
     idx = opts.index(cur) if cur in opts else 1
     interval = st.selectbox("Interval", options=opts, format_func=lambda x: f"{x} s", index=idx, key="wa_interval")
@@ -203,6 +244,10 @@ st.caption("**Last refresh:** " + str(st.session_state.wa_last_refresh))
 if st.session_state.wa_refresh_msg:
     st.warning(st.session_state.wa_refresh_msg)
     st.session_state.wa_refresh_msg = None
+
+rate_limit_wait = int(max(0, st.session_state.wa_rate_limit_until - time.time()))
+if rate_limit_wait > 0:
+    st.warning(f"Too many requests (429). Slowing refresh for {rate_limit_wait}s.")
 
 def _poll_one_tick() -> tuple[Optional[str], Optional[str], Optional[str]]:
     qr_data, qr_err = get_wa_qr(force_refresh=True)
@@ -229,6 +274,9 @@ if st.session_state.get("wa_connect_clicked") and st.session_state.wa_polling an
         if poll_err:
             st.session_state.wa_polling = False
             st.session_state.wa_refresh_msg = poll_err
+            if "429" in poll_err or "Rate limit" in poll_err:
+                st.session_state.wa_rate_limit_until = time.time() + RATE_LIMIT_BACKOFF_SECONDS
+                st.session_state.wa_auto_refresh_interval = max(int(st.session_state.wa_auto_refresh_interval or 10), 30)
         elif qr_status == "connected":
             st.session_state.wa_polling = False
             st.session_state.wa_refresh_msg = "✅ Connected!"
@@ -282,6 +330,8 @@ elif connected:
 # --- Auto-refresh: rerun page on interval when enabled (Streamlit 1.33+ run_every) ---
 if st.session_state.wa_auto_refresh and st.session_state.wa_auto_refresh_interval:
     sec = int(st.session_state.wa_auto_refresh_interval)
+    if rate_limit_wait > 0:
+        sec = max(sec, rate_limit_wait)
     try:
         @st.fragment(run_every=timedelta(seconds=sec))
         def _auto_refresh_tick():
@@ -298,6 +348,25 @@ with st.expander("FAQ"):
     st.caption("This links your WhatsApp account so the bot can send/receive messages.")
     st.markdown("**How to disconnect?**")
     st.caption("In WhatsApp: Settings → Linked Devices → select this device → Log out.")
+
+with st.expander("📡 Connectivity (netcheck + bot status)"):
+    nc = netcheck_data if isinstance(netcheck_data, dict) else {}
+    nc_ok = nc.get("ok")
+    nc_sc = nc.get("status_code")
+    nc_err = nc.get("error")
+    st.caption("**Netcheck:** ok=%s | status_code=%s | error=%s" % (
+        nc_ok if nc_ok is not None else "N/A",
+        nc_sc if nc_sc is not None else "N/A",
+        repr(nc_err)[:80] if nc_err else "—",
+    ))
+    st.caption("**Bot status:**")
+    if status_data and isinstance(status_data, dict):
+        safe = {k: v for k, v in status_data.items() if "token" not in (str(k)).lower() and "secret" not in (str(k)).lower()}
+        st.json(safe)
+    elif status_err:
+        st.caption("Error: " + str(status_err))
+    if netcheck_err:
+        st.caption("Netcheck request: " + str(netcheck_err))
 
 with st.expander("🔍 Debug (no secrets)"):
     st.caption("Status and polling state (token never shown):")

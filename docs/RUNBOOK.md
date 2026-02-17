@@ -225,3 +225,60 @@ docker compose up -d
 - Check `data/sources.yaml` exists and has valid URLs
 - For Telegram: `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELETHON_SESSION_PATH`
 - Logs: `docker compose logs -f collector`
+
+---
+
+## WhatsApp bot not running / QR not showing
+
+**Symptom**: `/admin/wa/qr` returns 200 but `qr: null`; no `whatsapp-bot` container in `docker compose ps`.
+
+**Cause**: The WhatsApp bot service is **optional** and started only with the `whatsapp` profile.
+
+**Fix**:
+```bash
+cd /opt/gni-bot-creator
+docker compose --profile whatsapp up -d
+docker compose ps   # confirm whatsapp-bot is running
+docker compose logs whatsapp-bot --tail 20
+```
+
+Then in Streamlit (or API), click **Connect WhatsApp** and poll for QR. If the VM IP is blocked by WhatsApp, use **Telegram** or **Make webhook** instead (see docs/WHATSAPP_QR_ARCHITECTURE.md).
+
+---
+
+## Worker not processing (scoring=0, publish=0)
+
+**Symptom**: Worker heartbeat shows `llm_draft=0 publish=0 scoring=0` every cycle.
+
+**Possible causes and fixes**:
+
+1. **DRY_RUN is on** — Worker does not publish for real when `DRY_RUN=1` (default in compose). For production:
+   ```bash
+   # In .env on VM
+   DRY_RUN=0
+   ```
+   Then restart worker: `docker compose up -d worker`.
+
+2. **No items in pipeline** — Collector may not have created items, or all items are already processed. Check counts:
+   ```bash
+   docker compose exec postgres psql -U gni -d gni -c "SELECT status, COUNT(*) FROM items GROUP BY status;"
+   docker compose exec postgres psql -U gni -d gni -c "SELECT COUNT(*) FROM publications;"
+   ```
+   If `new`/`scored`/`drafted` are 0, wait for collector to ingest or check collector logs.
+
+3. **Run pipeline once manually** (for debugging):
+   ```bash
+   docker compose exec worker python -m apps.worker.tasks --once --no-dry-run
+   ```
+
+---
+
+## Troubleshooting script
+
+From repo root on the VM:
+
+```bash
+bash scripts/troubleshoot_vm.sh
+```
+
+This script checks: running services (including whatsapp-bot), worker DRY_RUN, DB item/publication counts, and suggests fixes.

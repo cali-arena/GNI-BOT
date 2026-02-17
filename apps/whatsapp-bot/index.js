@@ -5,10 +5,10 @@
  */
 const express = require('express');
 const fs = require('fs');
+const https = require('https');
 const path = require('path');
 const { default: makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
 const pino = require('pino');
-const qrcode = require('qrcode-terminal');
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 const PORT = parseInt(process.env.PORT || '3100', 10);
@@ -23,7 +23,9 @@ const nowTs = () => Math.floor(Date.now() / 1000);
 function writeLastQr(payload) {
   try {
     fs.mkdirSync(AUTH_FOLDER, { recursive: true });
-    fs.writeFileSync(QR_FILE, JSON.stringify(payload, null, 2), 'utf-8');
+    const tmp = `${QR_FILE}.tmp.${process.pid}.${Date.now()}`;
+    fs.writeFileSync(tmp, JSON.stringify(payload, null, 2), 'utf-8');
+    fs.renameSync(tmp, QR_FILE);
   } catch (e) {
     logger.warn('writeLastQr: %s', e.message);
   }
@@ -39,6 +41,40 @@ let connected = false;
 let connecting = false;
 let phoneNumber = null;
 let connectionState = 'disconnected'; // disconnected, connecting, qr_ready, connected
+
+// Production reconnection policy: backoff (max 60s) and cooldown after 3 Connection Failures in 2 min
+const CONNECTION_FAILURE_WINDOW_MS = 2 * 60 * 1000;
+const CONNECTION_FAILURE_COOLDOWN_MS = 10 * 60 * 1000;
+const BACKOFF_MAX_SECONDS = 60;
+let connectionFailureTimestamps = [];
+let cooldownUntil = 0;
+let reconnectBackoffAttempt = 0;
+
+function isConnectionFailure(up) {
+  const reason = up.lastDisconnectReason;
+  if (reason == null) return false;
+  const str = typeof reason === 'string' ? reason : (reason.error?.message || reason.message || JSON.stringify(reason));
+  return /connection\s+failure/i.test(str);
+}
+
+function pruneConnectionFailureTimestamps() {
+  const cutoff = Date.now() - CONNECTION_FAILURE_WINDOW_MS;
+  connectionFailureTimestamps = connectionFailureTimestamps.filter((t) => t > cutoff);
+}
+
+function recordConnectionFailure() {
+  connectionFailureTimestamps.push(Date.now());
+  pruneConnectionFailureTimestamps();
+  if (connectionFailureTimestamps.length >= 3) {
+    cooldownUntil = Date.now() + CONNECTION_FAILURE_COOLDOWN_MS;
+    logger.info({ event: 'WA_COOLDOWN', cooldown_minutes: 10 }, 'WA_COOLDOWN: 3 Connection Failures in 2 min; reconnect paused 10 min');
+  }
+}
+
+function getBackoffDelayMs() {
+  const sec = Math.min(Math.pow(2, reconnectBackoffAttempt), BACKOFF_MAX_SECONDS);
+  return sec * 1000;
+}
 
 /**
  * Load persisted QR state from file.
@@ -89,12 +125,7 @@ function saveQrState(status, qr = null, reason = null) {
       lastDisconnectReason: reason || null,
     };
     
-    // Ensure directory exists
-    if (!fs.existsSync(AUTH_FOLDER)) {
-      fs.mkdirSync(AUTH_FOLDER, { recursive: true });
-    }
-    
-    fs.writeFileSync(QR_FILE, JSON.stringify(state, null, 2), 'utf-8');
+    writeLastQr(state);
     logger.debug({ event: 'QR_STATE_SAVED', status }, 'Saved QR state: %s', status);
   } catch (e) {
     logger.warn({ event: 'QR_STATE_SAVE_ERROR' }, 'Failed to save QR state: %s', e.message);
@@ -159,25 +190,34 @@ async function connect() {
     logger.info('Starting Baileys socket...');
 
     sock.ev.on('connection.update', (up) => {
-      // QR event
+      // QR event (do not log or print QR string)
       if (up.qr) {
         qrValue = up.qr;
-        logger.info('QR_READY');
-        writeLastQr({ qr: up.qr, status: 'qr_ready', expires_at: nowTs() + 60, updated_at: nowTs() });
-        qrcode.generate(up.qr, { small: true });
+        qrTimestamp = Date.now();
+        connectionState = 'qr_ready';
+        logger.info({ event: 'QR_READY' }, 'QR_READY');
+        writeLastQr({ qr: up.qr, status: 'qr_ready', expires_at: nowTs() + QR_EXPIRY_SECONDS, updated_at: nowTs() });
       }
-      
+
       // Connection state changes
       if (up.connection === 'open') {
+        reconnectBackoffAttempt = 0;
+        connectionFailureTimestamps = [];
         connected = true;
         qrValue = null;
-        logger.info('CONNECTED');
+        qrTimestamp = null;
+        connectionState = 'connected';
+        logger.info({ event: 'CONNECTED' }, 'CONNECTED');
         writeLastQr({ qr: null, status: 'connected', expires_at: 0, updated_at: nowTs() });
         phoneNumber = up.me?.id?.split(':')[0] || null;
       } else if (up.connection === 'close') {
         lastDisconnectReason = up.lastDisconnectReason || null;
         connected = false;
-        logger.info({ reason: lastDisconnectReason }, 'DISCONNECTED');
+        if (isConnectionFailure(up)) {
+          recordConnectionFailure();
+        }
+        connectionState = 'disconnected';
+        logger.info({ reason: lastDisconnectReason, event: 'DISCONNECTED' }, 'DISCONNECTED');
         writeLastQr({ qr: null, status: 'disconnected', lastDisconnectReason, expires_at: 0, updated_at: nowTs() });
         phoneNumber = null;
       }
@@ -202,6 +242,37 @@ async function connect() {
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
+});
+
+app.get('/netcheck', (req, res) => {
+  const serverTime = new Date().toISOString();
+  const timeoutMs = 5000;
+  let responded = false;
+
+  const send = (payload) => {
+    if (responded) return;
+    responded = true;
+    res.json(payload);
+  };
+
+  const hreq = https.request(
+    { hostname: 'web.whatsapp.com', path: '/', method: 'HEAD' },
+    (hres) => {
+      send({ ok: true, status_code: hres.statusCode, error: null, server_time: serverTime });
+    }
+  );
+
+  hreq.on('error', (err) => {
+    send({ ok: false, status_code: null, error: err.message || String(err), server_time: serverTime });
+  });
+
+  hreq.on('timeout', () => {
+    hreq.destroy();
+    send({ ok: false, status_code: null, error: 'timeout', server_time: serverTime });
+  });
+
+  hreq.setTimeout(timeoutMs);
+  hreq.end();
 });
 
 app.get('/debug/auth', (req, res) => {
@@ -244,10 +315,17 @@ app.get('/debug/auth', (req, res) => {
 });
 
 app.get('/status', (req, res) => {
+  const now = Date.now();
+  const in_cooldown = cooldownUntil > now;
+  const status = connected
+    ? 'connected'
+    : (qrValue ? 'qr_ready' : (connecting ? 'not_ready' : 'disconnected'));
   res.json({
     connected,
-    status: connected ? 'connected' : (qrValue ? 'qr_ready' : (connecting ? 'not_ready' : 'disconnected')),
+    status,
     lastDisconnectReason: lastDisconnectReason || null,
+    in_cooldown,
+    cooldown_until: in_cooldown ? new Date(cooldownUntil).toISOString() : null,
     server_time: new Date().toISOString(),
   });
 });
@@ -288,68 +366,66 @@ app.get('/qr', (req, res) => {
 });
 
 app.post('/reconnect', async (req, res) => {
-  // Return immediately - reconnect is non-blocking
+  const wipe_auth = !!(req.body && req.body.wipe_auth === true);
   res.json({ ok: true, message: 'Reconnect triggered. Poll /qr for QR code.' });
-  
-  // Perform reconnect asynchronously (fire-and-forget)
+
   (async () => {
     try {
-      console.log('RECONNECT_REQUESTED');
-      logger.info({ event: 'RECONNECT_REQUESTED' }, 'Reconnect requested');
-      
-      // Prevent double reconnection
+      logger.info({ event: 'WA_RECONNECT_REQUESTED', wipe_auth }, 'WA_RECONNECT_REQUESTED');
+
       if (connecting) {
         logger.warn({ event: 'RECONNECT_ALREADY_IN_PROGRESS' }, 'Reconnect already in progress, skipping');
         return;
       }
-      
-      // If currently connected, logout first
-      if (connected && sock) {
-        console.log('LOGOUT_START');
-        logger.info({ event: 'LOGOUT_START' }, 'Currently connected, logging out first...');
-        try {
-          await sock.logout();
-          console.log('LOGOUT_SUCCESS');
-          logger.info({ event: 'LOGOUT_SUCCESS' }, 'Logout successful');
-        } catch (e) {
-          console.log('LOGOUT_ERROR', e.message);
-          logger.warn({ event: 'LOGOUT_ERROR' }, 'Logout error (continuing): %s', e.message);
-          // Force close socket
+
+      const now = Date.now();
+      if (cooldownUntil > now) {
+        logger.info({ event: 'WA_COOLDOWN', cooldown_until: new Date(cooldownUntil).toISOString() }, 'WA_COOLDOWN: reconnect skipped (in cooldown)');
+        return;
+      }
+
+      if (sock) {
+        if (wipe_auth) {
+          logger.info({ event: 'LOGOUT_START' }, 'wipe_auth=true: logging out and clearing auth');
           try {
-            sock.end(undefined);
-          } catch (_) {}
+            await sock.logout();
+            logger.info({ event: 'LOGOUT_SUCCESS' }, 'Logout successful');
+          } catch (e) {
+            logger.warn({ event: 'LOGOUT_ERROR' }, 'Logout error (continuing): %s', e.message);
+            try { sock.end(undefined); } catch (_) {}
+          }
+        } else {
+          logger.info({ event: 'SOCKET_RESTART' }, 'wipe_auth=false: restarting socket without logout');
+          try { sock.end(undefined); } catch (_) {}
         }
         sock = null;
         connected = false;
         connectionState = 'disconnected';
-        // Brief wait for logout to complete
         await new Promise((r) => setTimeout(r, 500));
       }
-      
-      // Clear auth state if not connected
-      if (!connected) {
-        console.log('AUTH_CLEARED');
+
+      if (wipe_auth) {
         clearAuthFolder();
         writeLastQr({ qr: null, status: 'disconnected', expires_at: 0, updated_at: nowTs() });
+        logger.info({ event: 'WA_AUTH_WIPED' }, 'WA_AUTH_WIPED');
       }
-      
-      // Reset state
+
       qrValue = null;
       qrTimestamp = null;
       phoneNumber = null;
       connectionState = 'disconnected';
-      
-      // Start connection (non-blocking)
-      console.log('RECONNECT_CONNECT_START');
+
+      const backoffMs = getBackoffDelayMs();
+      if (backoffMs > 0) {
+        logger.info({ event: 'WA_BACKOFF', delay_seconds: backoffMs / 1000 }, 'WA_BACKOFF');
+        await new Promise((r) => setTimeout(r, backoffMs));
+      }
+      reconnectBackoffAttempt += 1;
+
       await connect();
-      
-      // Note: QR will be available via polling /qr endpoint
-      console.log('RECONNECT_IN_PROGRESS');
       logger.info({ event: 'RECONNECT_IN_PROGRESS' }, 'Reconnect initiated, QR will appear shortly');
     } catch (e) {
-      console.error('RECONNECT_ERROR', e.message);
       logger.error({ event: 'RECONNECT_ERROR' }, 'reconnect: %s', e.message);
-      logger.error(e.stack);
     }
   })();
 });
@@ -404,6 +480,7 @@ async function main() {
   // Listen on 0.0.0.0 to accept connections from Docker network
   app.listen(PORT, '0.0.0.0', () => {
     console.log('HTTP_SERVER_STARTED', PORT);
+    console.log('NETCHECK_AVAILABLE');
     logger.info({ event: 'SERVER_STARTED', port: PORT }, 'WhatsApp bot listening on 0.0.0.0:%d', PORT);
   });
 }

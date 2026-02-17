@@ -68,6 +68,8 @@ if display_info.get("base_url"):
 # --- Fetch monitoring data (one call returns status + recent) ---
 status_data, status_err = get_monitoring_status(tenant=tenant)
 recent: list = []
+is_404 = status_err and ("Not Found" in str(status_err) or "404" in str(status_err))
+
 if status_err:
     if st.session_state.mon_last_status is not None:
         status_data = st.session_state.mon_last_status
@@ -79,8 +81,18 @@ if status_err:
     else:
         st.error(status_err)
         render_api_error_hint(display_info)
-        st.caption("Scraping runs 24/7 on the backend. Use **Posts** to review and publish.")
-        st.stop()
+        if is_404:
+            st.info(
+                "**Monitoring endpoint not available (404).** "
+                "Deploy the latest API to your backend so the `/monitoring` route exists: "
+                "run `deploy_vm.ps1 -Full` from **gni-bot-creator**, then on the VM run "
+                "`docker compose build api && docker compose up -d api`. After that, click **Refresh**."
+            )
+            status_data = None
+            recent = []
+        else:
+            st.caption("Scraping runs 24/7 on the backend. Use **Posts** to review and publish.")
+            st.stop()
 else:
     if isinstance(status_data, dict):
         recent = status_data.get("recent") or []

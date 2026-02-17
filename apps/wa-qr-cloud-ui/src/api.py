@@ -31,8 +31,8 @@ def add_query(path: Optional[str], params: dict) -> str:
 
 # --- Client-side throttle: {cache_key: (timestamp, (data, error))} ---
 _wa_cache: dict[str, tuple[float, tuple[Any, Optional[str]]]] = {}
-WA_THROTTLE_STATUS = 8   # seconds (status cache)
-WA_THROTTLE_QR = 12      # seconds (QR cache)
+WA_THROTTLE_STATUS = 12  # seconds (status cache)
+WA_THROTTLE_QR = 15      # seconds (QR cache)
 
 # --- Last request info for UI (safe: no tokens, URL only) ---
 _last_http_status: Optional[int] = None
@@ -343,13 +343,13 @@ def get_wa_status_user() -> tuple[Optional[dict], Optional[str]]:
     return api_get_jwt("/whatsapp/status")
 
 
-def _wa_paths() -> tuple[str, str, str]:
-    """Return (status_path, qr_path, reconnect_path) for /admin/wa/* endpoints."""
-    # Always use /admin/wa/* endpoints with X-API-Key
+def _wa_paths() -> tuple[str, str, str, str]:
+    """Return (status_path, qr_path, reconnect_path, netcheck_path) for /admin/wa/* endpoints."""
     return (
         "/admin/wa/status",
         "/admin/wa/qr",
         "/admin/wa/reconnect",
+        "/admin/wa/netcheck",
     )
 
 
@@ -453,7 +453,7 @@ def clear_wa_cache() -> None:
 
 def get_wa_status() -> tuple[Optional[dict], Optional[str]]:
     """GET WA status. Throttled 6s. Returns dict with 'connected' boolean."""
-    path, _, _ = _wa_paths()
+    path, _, _, _ = _wa_paths()
     data, err = _wa_request("GET", path, throttle_seconds=WA_THROTTLE_STATUS)
     if err:
         return None, err
@@ -465,7 +465,7 @@ def get_wa_status() -> tuple[Optional[dict], Optional[str]]:
 
 def get_wa_qr(*, force_refresh: bool = False) -> tuple[Optional[dict], Optional[str]]:
     """GET WA QR. Throttled 8s unless force_refresh=True. Returns dict with 'qr' (str or None)."""
-    _, path, _ = _wa_paths()
+    _, path, _, _ = _wa_paths()
     if force_refresh:
         cache_key = f"GET {path}"
         _wa_cache.pop(cache_key, None)
@@ -478,10 +478,17 @@ def get_wa_qr(*, force_refresh: bool = False) -> tuple[Optional[dict], Optional[
     return {"qr": qr if qr else None, **data}, None
 
 
-def post_wa_reconnect() -> tuple[Optional[dict], Optional[str]]:
-    """POST WA reconnect. No throttle. Backoff on 429/5xx."""
-    _, _, path = _wa_paths()
-    return _wa_request("POST", path, json_body={})
+def post_wa_reconnect(*, wipe_auth: bool = False) -> tuple[Optional[dict], Optional[str]]:
+    """POST WA reconnect. No throttle. Backoff on 429/5xx. wipe_auth defaults to False."""
+    _, _, path, _ = _wa_paths()
+    payload = {"wipe_auth": True} if wipe_auth else {}
+    return _wa_request("POST", path, json_body=payload)
+
+
+def get_wa_netcheck() -> tuple[Optional[dict], Optional[str]]:
+    """GET WA netcheck (connectivity to WhatsApp). Returns {ok, status_code, error, server_time} or error."""
+    _, _, _, path = _wa_paths()
+    return _wa_request("GET", path, throttle_seconds=0)
 
 
 def get_monitoring_status(tenant: Optional[str] = None) -> tuple[Optional[dict], Optional[str]]:

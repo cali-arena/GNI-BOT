@@ -36,7 +36,8 @@ from apps.worker.llm.ollama_ensure import ensure_ollama_model
 from apps.worker.render import render
 from apps.worker.safety import PublishPausedError, assert_publish_allowed
 from apps.publisher.telegram import publish_telegram
-from apps.publisher.whatsapp_web import send_whatsapp_web
+from apps.publisher.whatsapp_web import send_whatsapp_web, WhatsAppWebResult
+from apps.publisher.make_webhook import send_make_webhook
 from apps.publisher.rate_limit import (
     RateLimitExceededError,
     check_rate_limit,
@@ -292,20 +293,81 @@ def _process_single_item(
         )
         if not messages:
             messages = [str(payload)[:1000]]
-        publish_telegram(messages, channel="telegram", dry_run=dry_run, session=session)
         rendered_text = "\n---\n".join(messages) if messages else ""
         priority = f"P{task.priority}" if task.priority is not None else "P2"
+
+        # Per-channel success: item is published if at least one channel delivers (existing Publication rows record each)
+        telegram_ok = False
+        try:
+            tg_result = publish_telegram(messages, channel="telegram", dry_run=dry_run, session=session)
+            telegram_ok = (tg_result.status == "sent") or (getattr(tg_result, "dry_run", False) and dry_run)
+        except Exception as tg_err:
+            now_tg = datetime.now(timezone.utc)
+            session.add(Publication(channel="telegram", status="failed", attempts=1, published_at=now_tg))
+            session.flush()
+            try:
+                _log_info("TELEGRAM_PUBLISH_FAILED", item_id=task.item_id, error_class=type(tg_err).__name__)
+            except Exception:
+                pass
+
         item = session.query(Item).filter(Item.id == task.item_id).first()
         if item:
-            wa_web_result = send_whatsapp_web(
-                session,
-                item,
-                rendered_text=rendered_text,
-                template=task.template or "DEFAULT",
-                dry_run=dry_run,
-            )
-            if wa_web_result.status == "failed":
-                raise RuntimeError(wa_web_result.last_error or "whatsapp_web send failed")
+            wa_web_result = None
+            wa_fallback_logged = False
+            try:
+                wa_web_result = send_whatsapp_web(
+                    session,
+                    item,
+                    rendered_text=rendered_text,
+                    template=task.template or "DEFAULT",
+                    dry_run=dry_run,
+                )
+            except Exception as wa_err:
+                # Fallback: network/connection failure — log Publication, continue with other channels (Make).
+                now_wa = datetime.now(timezone.utc)
+                session.add(
+                    Publication(channel="whatsapp_web", status="failed", attempts=1, published_at=now_wa)
+                )
+                session.flush()
+                wa_web_result = WhatsAppWebResult(status="failed", last_error=str(wa_err)[:500])
+                wa_fallback_logged = True
+                try:
+                    _log_info(
+                        "WHATSAPP_BLOCKED_FALLBACK",
+                        error_class=type(wa_err).__name__,
+                        error_message=str(wa_err)[:200],
+                    )
+                except Exception:
+                    pass
+
+            if wa_web_result and wa_web_result.status == "failed" and not wa_fallback_logged:
+                try:
+                    _log_info(
+                        "WHATSAPP_BLOCKED_FALLBACK",
+                        error_class="SendFailed",
+                        error_message=(wa_web_result.last_error or "unknown")[:200],
+                    )
+                except Exception:
+                    pass
+
+            wa_ok = wa_web_result and (wa_web_result.status == "sent" or (wa_web_result.dry_run and dry_run))
+
+            # Optional fallback: when whatsapp_web failed and make_webhook enabled, try make_webhook (never blocks)
+            if wa_web_result and wa_web_result.status == "failed":
+                try:
+                    mw_result = send_make_webhook(
+                        session, item,
+                        rendered_text=rendered_text,
+                        dry_run=dry_run,
+                    )
+                    if mw_result.status == "sent":
+                        try:
+                            _log_info("MAKE_WEBHOOK_FALLBACK_SUCCESS", item_id=task.item_id)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
             from apps.publisher.whatsapp_make import send_whatsapp_via_make
 
             make_result = send_whatsapp_via_make(
@@ -317,8 +379,16 @@ def _process_single_item(
                 dry_run=dry_run,
                 messages=messages,
             )
-            if make_result.status == "dead_letter":
+            make_ok = make_result.status == "sent" or (make_result.dry_run and dry_run)
+            any_channel_ok = telegram_ok or wa_ok or make_ok
+            if make_result.status == "dead_letter" and not any_channel_ok:
                 raise RuntimeError(make_result.last_error or "Make webhook exhausted retries")
+        else:
+            any_channel_ok = telegram_ok
+
+        if not any_channel_ok:
+            raise RuntimeError("No channel delivered (telegram, whatsapp_web, make)")
+
         now = datetime.now(timezone.utc)
         session.bulk_update_mappings(
             Draft,

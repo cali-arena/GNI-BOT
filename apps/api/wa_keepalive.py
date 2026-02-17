@@ -34,7 +34,7 @@ def _has_wa_config() -> bool:
 
 async def _get_status(client: httpx.AsyncClient) -> Optional[dict]:
     try:
-        r = await client.get(f"{_bot_base_url()}/health", timeout=5.0)
+        r = await client.get(f"{_bot_base_url()}/status", timeout=5.0)
         r.raise_for_status()
         return r.json()
     except Exception:
@@ -69,8 +69,12 @@ async def _run_keepalive_cycle() -> None:
         status = await _get_status(client)
         if not status:
             return
-        connected = status.get("connected") or status.get("status") == "open"
-        if connected:
+        status_name = str(status.get("status") or "").strip().lower()
+        connected = bool(status.get("connected")) or status_name == "connected"
+        # Do not reconnect while bot is already connecting, has a QR, or is in cooldown.
+        if connected or status_name in ("qr_ready", "not_ready"):
+            return
+        if bool(status.get("in_cooldown")):
             return
         # Disconnected: trigger reconnect
         ok = await _trigger_reconnect(client)

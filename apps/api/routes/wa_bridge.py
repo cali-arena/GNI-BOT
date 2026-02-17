@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from apps.api.settings_utils import env_int
@@ -32,12 +32,14 @@ if not WA_BOT_BASE_URL or "localhost" in WA_BOT_BASE_URL or "127.0.0.1" in WA_BO
 WA_QR_BRIDGE_TOKEN = get_secret("WA_QR_BRIDGE_TOKEN", "").strip()
 WA_QR_TTL_SECONDS = env_int("WA_QR_TTL_SECONDS", default=120)
 WA_QR_RATE_LIMIT_PER_MINUTE = env_int("WA_QR_RATE_LIMIT_PER_MINUTE", default=90)
+WA_BRIDGE_CACHE_TTL_SECONDS = env_int("WA_BRIDGE_CACHE_TTL_SECONDS", default=3)
 WA_BOT_TIMEOUT_SECONDS = 20.0  # Bot can take 10–30s to generate QR after reconnect
 
 http_bearer = HTTPBearer(auto_error=False)
 
 # In-memory rate limit for /admin/wa/qr: IP -> list of request timestamps (last minute)
 _qr_rate: dict[str, list[float]] = defaultdict(list)
+_bridge_cache: dict[str, tuple[float, dict]] = {}
 
 
 def _client_ip(request: Request) -> str:
@@ -73,11 +75,34 @@ async def require_wa_bridge_token(
 # Security: both use same Bearer auth. No weakening of auth for /wa/*.
 
 
+async def _fetch_netcheck() -> dict:
+    """Proxy to whatsapp-bot GET /netcheck. Returns {ok, status_code, error, server_time}."""
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r = await client.get(f"{WA_BOT_BASE_URL}/netcheck")
+            data = r.json() if r.content else {}
+    except Exception as e:
+        logger.warning("wa_bridge: netcheck error: %s", type(e).__name__)
+        return {"ok": False, "status_code": None, "error": str(e)[:200], "server_time": now}
+    return {
+        "ok": data.get("ok", False),
+        "status_code": data.get("status_code"),
+        "error": data.get("error"),
+        "server_time": data.get("server_time", now),
+    }
+
+
 async def _fetch_status() -> dict:
     """
     Proxy to whatsapp-bot /status (not /health). 
     Returns connected, status ("not_ready"|"qr_ready"|"connected"|"disconnected"), lastDisconnectReason, server_time.
     """
+    now_mono = time.monotonic()
+    cached = _bridge_cache.get("status")
+    if cached and (now_mono - cached[0] < WA_BRIDGE_CACHE_TTL_SECONDS):
+        return cached[1]
+
     now = datetime.now(timezone.utc).isoformat()
     try:
         async with httpx.AsyncClient(timeout=WA_BOT_TIMEOUT_SECONDS) as client:
@@ -86,20 +111,24 @@ async def _fetch_status() -> dict:
             data = r.json()
     except httpx.TimeoutException:
         logger.warning("wa_bridge: whatsapp-bot status timeout")
-        return {
+        out = {
             "connected": False,
             "status": "not_ready",
             "lastDisconnectReason": None,
             "server_time": now,
         }
+        _bridge_cache["status"] = (now_mono, out)
+        return out
     except Exception as e:
         logger.warning("wa_bridge: whatsapp-bot status error: %s", type(e).__name__)
-        return {
+        out = {
             "connected": False,
             "status": "not_ready",
             "lastDisconnectReason": None,
             "server_time": now,
         }
+        _bridge_cache["status"] = (now_mono, out)
+        return out
     
     # Bot returns: { connected: bool, status: "connected|qr_ready|not_ready|disconnected", lastDisconnectReason, server_time }
     # Use bot's status field directly (bot already maps it correctly)
@@ -116,12 +145,14 @@ async def _fetch_status() -> dict:
     else:
         status = bot_status
     
-    return {
+    out = {
         "connected": bot_connected,
         "status": status,
         "lastDisconnectReason": data.get("lastDisconnectReason"),
         "server_time": now,
     }
+    _bridge_cache["status"] = (now_mono, out)
+    return out
 
 
 def _fetch_qr_sync() -> dict:
@@ -195,22 +226,31 @@ def _fetch_qr_sync() -> dict:
 
 async def _fetch_qr() -> dict:
     """Async wrapper: run sync _fetch_qr_sync in thread pool."""
+    now_mono = time.monotonic()
+    cached = _bridge_cache.get("qr")
+    if cached and (now_mono - cached[0] < WA_BRIDGE_CACHE_TTL_SECONDS):
+        return cached[1]
     import asyncio
-    return await asyncio.to_thread(_fetch_qr_sync)
+    out = await asyncio.to_thread(_fetch_qr_sync)
+    _bridge_cache["qr"] = (now_mono, out)
+    return out
 
 
-async def _do_reconnect() -> dict:
+async def _do_reconnect(wipe_auth: bool = False) -> dict:
     """
     Trigger whatsapp-bot to logout and reconnect, generating a new QR.
     Non-blocking: triggers reconnect and returns quickly (< 2s).
     QR will be available via polling /admin/wa/qr.
     """
     now = datetime.now(timezone.utc).isoformat()
+    _bridge_cache.pop("status", None)
+    _bridge_cache.pop("qr", None)
     
     # Trigger reconnect (fire-and-forget with short timeout)
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
-            r = await client.post(f"{WA_BOT_BASE_URL}/reconnect")
+            payload = {"wipe_auth": True} if wipe_auth else {}
+            r = await client.post(f"{WA_BOT_BASE_URL}/reconnect", json=payload)
             r.raise_for_status()
             # Bot handles reconnect internally and returns quickly
             # No need to wait here - return immediately
@@ -244,7 +284,14 @@ async def wa_qr() -> dict:
     return await _fetch_qr()
 
 
+@router.get("/netcheck")
+async def wa_netcheck() -> dict:
+    """Proxy to whatsapp-bot /netcheck (network connectivity to WhatsApp)."""
+    return await _fetch_netcheck()
+
+
 @router.post("/reconnect")
-async def wa_reconnect() -> dict:
+async def wa_reconnect(payload: Optional[dict] = Body(default=None)) -> dict:
     """Trigger whatsapp-bot reconnect."""
-    return await _do_reconnect()
+    wipe_auth = bool(payload and payload.get("wipe_auth") is True)
+    return await _do_reconnect(wipe_auth=wipe_auth)
