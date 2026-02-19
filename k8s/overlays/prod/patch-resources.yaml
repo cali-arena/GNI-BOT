@@ -1,0 +1,57 @@
+# ConfigMap: ENV=prod
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gni-config
+  namespace: gni
+data:
+  ENV: "prod"
+---
+# API: replicas=3, production resources
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gni-api
+  namespace: gni
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+        - name: api
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+---
+# Worker: production resources
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gni-worker
+  namespace: gni
+spec:
+  template:
+    spec:
+      containers:
+        - name: worker
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+---
+# HPA: enabled, minReplicas=3 (matches API replicas)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gni-api
+  namespace: gni
+spec:
+  minReplicas: 3
+  maxReplicas: 10

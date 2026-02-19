@@ -3,6 +3,9 @@
 .env.local
 *.local
 
+# Kubernetes secrets (copy from secret.example.yaml, do not commit)
+k8s/base/secret.yaml
+
 # Data and auth (mounted on VM)
 data/wa-auth/
 data/telethon/

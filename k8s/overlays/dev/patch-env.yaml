@@ -1,0 +1,57 @@
+# ConfigMap: add ENV=dev
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gni-config
+  namespace: gni
+data:
+  ENV: "dev"
+---
+# API: replicas=1, reduce resources 50%
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gni-api
+  namespace: gni
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: api
+          resources:
+            requests:
+              cpu: "125m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+---
+# Worker: reduce resources 50%
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gni-worker
+  namespace: gni
+spec:
+  template:
+    spec:
+      containers:
+        - name: worker
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "250m"
+              memory: "128Mi"
+---
+# HPA: disable scaling (min=max=1)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gni-api
+  namespace: gni
+spec:
+  minReplicas: 1
+  maxReplicas: 1

@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gni-config
+  namespace: gni
+  labels:
+    app.kubernetes.io/name: gni
+data:
+  # Non-sensitive config; secrets go in Secret
+  PYTHONPATH: "/app"
+  API_PORT: "8000"
+  OLLAMA_BASE_URL: "http://ollama:11434"
+  OLLAMA_MODEL: "qwen2.5:7b"
+  OLLAMA_MODE: "native"
+  COLLECTOR_INTERVAL_MINUTES: "15"
+  INGEST_LIMIT: "50"
+  TELEGRAM_SINCE_MINUTES: "60"
+  RUN_EVERY_MINUTES: "15"
+  DEDUPE_DAYS: "7"
+  LOG_JSON: "1"
+  # External URLs set via Secret; ConfigMap holds non-sensitive defaults

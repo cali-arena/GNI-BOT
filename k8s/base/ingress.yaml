@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gni-api
+  namespace: gni
+  labels:
+    app: gni-api
+    app.kubernetes.io/name: gni
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api.gni.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gni-api
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - api.gni.local
+      secretName: gni-tls

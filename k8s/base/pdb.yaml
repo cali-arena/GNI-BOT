@@ -1,0 +1,13 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: gni-api-pdb
+  namespace: gni
+  labels:
+    app: gni-api
+    app.kubernetes.io/name: gni
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: gni-api
