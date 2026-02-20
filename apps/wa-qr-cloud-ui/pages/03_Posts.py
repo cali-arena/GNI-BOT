@@ -38,12 +38,21 @@ with tab_pending:
             title = (item.get("title") or item.get("source_name") or f"#{id_}") if isinstance(item, dict) else str(item)
             status = item.get("status", "pending") if isinstance(item, dict) else "pending"
             created = (item.get("created_at") or "—") if isinstance(item, dict) else "—"
+            needs_review = item.get("needs_review", False) if isinstance(item, dict) else False
+            rendered = (item.get("rendered_text") or "").strip() if isinstance(item, dict) else ""
+            draft_payload = item.get("draft_payload") or {} if isinstance(item, dict) else {}
             with st.container():
                 st.markdown(f"**{_emoji(str(status))} {title}**")
-                st.caption(f"ID {id_} · {created}")
+                st.caption(f"ID {id_} · {created}" + (" · Needs approval" if needs_review else " · Auto-publish"))
+                if rendered:
+                    with st.expander("📝 Formatted post preview", expanded=True):
+                        st.markdown(rendered.replace("\n", "\n\n"))
+                elif draft_payload:
+                    with st.expander("📝 Draft content"):
+                        st.json(draft_payload)
                 col1, col2, col3 = st.columns([1, 1, 2])
                 with col1:
-                    if st.button("Approve ✅", key=f"approve_{id_}"):
+                    if needs_review and st.button("Approve ✅", key=f"approve_{id_}"):
                         _, action_err = post_approve(id_)
                         if action_err:
                             st.error(action_err)
@@ -51,7 +60,7 @@ with tab_pending:
                             st.success("Approved.")
                             st.rerun()
                 with col2:
-                    if st.button("Reject ❌", key=f"reject_{id_}"):
+                    if needs_review and st.button("Reject ❌", key=f"reject_{id_}"):
                         _, action_err = post_reject(id_)
                         if action_err:
                             st.error(action_err)
@@ -60,7 +69,7 @@ with tab_pending:
                             st.rerun()
                 st.divider()
     else:
-        st.info("No pending posts.")
+        st.info("No pending posts. Items move here after LLM drafting (score → draft). Ensure Ollama is reachable from the worker.")
 
 with tab_published:
     st.subheader("Published")
@@ -68,18 +77,18 @@ with tab_published:
     if err2:
         st.warning(err2)
     elif published and len(published) > 0:
-        rows = []
         for item in published:
             if isinstance(item, dict):
-                status = item.get("status", "—")
-                rows.append({
-                    "Status": _emoji(str(status)) + " " + str(status),
-                    "ID": item.get("id", "—"),
-                    "Title": (item.get("title") or item.get("source_name") or "—")[:50],
-                    "Created": item.get("created_at") or "—",
-                })
-            else:
-                rows.append({"Status": "—", "ID": str(item), "Title": "—", "Created": "—"})
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+                id_ = item.get("id")
+                title = (item.get("title") or item.get("source_name") or f"#{id_}")[:80]
+                created = item.get("created_at") or "—"
+                rendered = (item.get("rendered_text") or "").strip()
+                with st.container():
+                    st.markdown(f"**{_emoji('published')} {title}**")
+                    st.caption(f"ID {id_} · {created}")
+                    if rendered:
+                        with st.expander("📝 Formatted post", expanded=False):
+                            st.markdown(rendered.replace("\n", "\n\n"))
+                    st.divider()
     else:
         st.info("No published posts.")

@@ -1,8 +1,8 @@
 """
 API wrapper: api_get / api_post with base URL and auth. Friendly errors; never log secrets.
 
-WA (WhatsApp) /admin/wa/* endpoints use Authorization: Bearer WA_QR_BRIDGE_TOKEN.
-- Set WA_QR_BRIDGE_TOKEN in Streamlit secrets (same as on VM .env).
+WA (WhatsApp) status/QR/reconnect/netcheck use GET/POST {base}/wa/* with X-API-Key only (no /admin/wa/*).
+- Set API_KEY or ADMIN_API_KEY in Streamlit secrets.
 - Exponential backoff on transient errors (429, 502, 503, 504).
 - Client-side throttling: same GET endpoint < N seconds ago returns cached result.
 """
@@ -37,6 +37,10 @@ WA_THROTTLE_QR = 15      # seconds (QR cache)
 # --- Last request info for UI (safe: no tokens, URL only) ---
 _last_http_status: Optional[int] = None
 _last_request_url: Optional[str] = None
+_last_request_path: Optional[str] = None  # path used (e.g. /wa/status) for debug
+_last_response_preview: Optional[str] = None  # first 200 chars sanitized (no token values)
+_last_wa_poll_timestamp: Optional[float] = None  # time.time() when last WA status/qr poll ran
+_last_wa_error: Optional[str] = None  # last error message from WA request (for diagnostics)
 
 
 def _get_config():
@@ -120,6 +124,30 @@ def get_api_display_info() -> dict[str, Any]:
     }
 
 
+def get_wa_debug_info() -> dict[str, Any]:
+    """Return debug/diagnostics: base URL, api_key_set, last status, last error, endpoint used. No secrets."""
+    status_path, qr_path, reconnect_path, netcheck_path = _wa_paths()
+    from datetime import datetime, timezone
+    last_poll_ts = _last_wa_poll_timestamp
+    last_poll_str = datetime.fromtimestamp(last_poll_ts, tz=timezone.utc).isoformat() if last_poll_ts else None
+    return {
+        "effective_base_url": _base_url() or "(not set)",
+        "api_key_set": has_wa_api_key(),
+        "auth_mode": "x-api-key",
+        "endpoints": {
+            "status": status_path,
+            "qr": qr_path,
+            "reconnect": reconnect_path,
+            "netcheck": netcheck_path,
+        },
+        "endpoint_used": _last_request_path,
+        "last_poll_timestamp": last_poll_str,
+        "last_http_status": _last_http_status,
+        "last_error": _last_wa_error or "",
+        "last_response_preview": _last_response_preview or "",
+    }
+
+
 def api_get(path: str, *, timeout: Optional[int] = None, use_bearer: bool = True) -> tuple[Optional[Any], Optional[str]]:
     """GET {base}{path}. Returns (data, error). On non-200 returns friendly error (no secrets)."""
     import requests
@@ -138,14 +166,16 @@ def api_get(path: str, *, timeout: Optional[int] = None, use_bearer: bool = True
     except requests.exceptions.HTTPError as e:
         _last_http_status = e.response.status_code if e.response else None
         try:
-            detail = e.response.json().get("detail", "Request failed")
+            detail = e.response.json().get("detail", "Request failed") if e.response else "Request failed"
         except Exception:
-            detail = "Request failed"
+            detail = (e.response.text[:200] if e.response and e.response.text else "Request failed")
         if e.response and e.response.status_code == 401:
-            return None, f"Authentication failed (401). Check your secrets."
+            return None, "Authentication failed (401). Check your secrets."
+        if e.response and e.response.status_code == 403:
+            return None, "Forbidden (403). Invalid or missing API key or token."
         if e.response and e.response.status_code == 404:
-            return None, f"Endpoint not found (404)."
-        return None, f"Request failed ({_last_http_status}): {str(detail)[:180]}"
+            return None, "Endpoint not found (404)."
+        return None, f"Request failed ({_last_http_status}): {str(detail)[:200]}"
     except requests.exceptions.ConnectTimeout:
         _last_http_status = None
         return None, _conn_err("Connection error: connect timed out.", url)
@@ -182,14 +212,16 @@ def api_post(path: str, json_body: Optional[dict] = None, *, timeout: Optional[i
     except requests.exceptions.HTTPError as e:
         _last_http_status = e.response.status_code if e.response else None
         try:
-            detail = e.response.json().get("detail", "Request failed")
+            detail = e.response.json().get("detail", "Request failed") if e.response else "Request failed"
         except Exception:
-            detail = "Request failed"
+            detail = (e.response.text[:200] if e.response and e.response.text else "Request failed")
         if e.response and e.response.status_code == 401:
             return None, "Authentication failed (401). Check your secrets."
+        if e.response and e.response.status_code == 403:
+            return None, "Forbidden (403). Invalid or missing API key or token."
         if e.response and e.response.status_code == 404:
             return None, "Endpoint not found (404)."
-        return None, f"Request failed ({_last_http_status}): {str(detail)[:180]}"
+        return None, f"Request failed ({_last_http_status}): {str(detail)[:200]}"
     except requests.exceptions.ConnectTimeout:
         _last_http_status = None
         return None, _conn_err("Connection error: connect timed out.", url)
@@ -343,13 +375,31 @@ def get_wa_status_user() -> tuple[Optional[dict], Optional[str]]:
     return api_get_jwt("/whatsapp/status")
 
 
+def has_wa_api_key() -> bool:
+    """True if API_KEY or ADMIN_API_KEY is set (required for /wa/* endpoints)."""
+    api_key = (_get_config().get("API_KEY") or _get_config().get("ADMIN_API_KEY") or "").strip()
+    return bool(api_key)
+
+
+def _sanitize_preview(text: str, max_len: int = 200) -> str:
+    """Return text with token-like values redacted; cap at max_len."""
+    if not text:
+        return ""
+    import re
+    # Redact Bearer tokens, API keys in JSON, and long base64/hex strings
+    out = re.sub(r"Bearer\s+[^\s\"']+", "Bearer [REDACTED]", text, flags=re.IGNORECASE)
+    out = re.sub(r"(api[_-]?key|token|authorization|access_token)\s*[:=]\s*[\"']?[^\"'\s,}\]]+", r"\1=[REDACTED]", out, flags=re.IGNORECASE)
+    out = re.sub(r"[\"']?(?:access_)?token[\"']?\s*:\s*[\"'][^\"']+[\"']", "\"token\": \"[REDACTED]\"", out, flags=re.IGNORECASE)
+    return out[:max_len]
+
+
 def _wa_paths() -> tuple[str, str, str, str]:
-    """Return (status_path, qr_path, reconnect_path, netcheck_path) for /admin/wa/* endpoints."""
+    """Return (status_path, qr_path, reconnect_path, netcheck_path). Always /wa/* with X-API-Key (no /admin/wa/*)."""
     return (
-        "/admin/wa/status",
-        "/admin/wa/qr",
-        "/admin/wa/reconnect",
-        "/admin/wa/netcheck",
+        "/wa/status",
+        "/wa/qr",
+        "/wa/reconnect",
+        "/wa/netcheck",
     )
 
 
@@ -361,16 +411,17 @@ def _wa_request(
     throttle_seconds: float = 0,
 ) -> tuple[Optional[Any], Optional[str]]:
     """
-    Shared WA request to /admin/wa/*: uses Authorization Bearer (WA_QR_BRIDGE_TOKEN).
-    Timeout (10s connect, 25s read) so slow bot/network don't fail; backoff on 429/502/503/504.
-    For GET with throttle_seconds > 0, returns cached result.
-    Returns (data, error_string).
+    WA request: GET/POST {base}{path} with X-API-Key only. Never uses /admin/wa/* or Bearer.
+    Requires API_KEY or ADMIN_API_KEY. Returns (data, error_string). Never raises.
     """
     import requests
+    global _last_wa_error
 
-    token = _get_wa_token()
-    if not token:
-        return None, "Missing Authorization header"
+    api_key = (_get_config().get("API_KEY") or _get_config().get("ADMIN_API_KEY") or "").strip()
+    if not api_key:
+        _last_wa_error = "API_KEY is required. Set API_KEY or ADMIN_API_KEY in Streamlit Cloud Secrets."
+        return None, _last_wa_error
+    headers = {"Content-Type": "application/json", "X-API-Key": api_key}
 
     cache_key = f"{method} {path}"
     now = time.time()
@@ -379,15 +430,33 @@ def _wa_request(
         if now - ts < throttle_seconds:
             return cached
 
-    global _last_http_status, _last_request_url
+    global _last_http_status, _last_request_url, _last_request_path, _last_response_preview, _last_wa_poll_timestamp
+    _last_wa_poll_timestamp = time.time()
+    _last_request_path = path
     base = _base_url()
     if not base:
-        return None, "API base URL not set"
+        _last_wa_error = "API base URL not set"
+        return None, _last_wa_error
     url = f"{base}{path}"
     _last_request_url = url
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
     to = _get_timeout()
     timeout = (to, to)
+
+    def _err_from_response(r: requests.Response) -> str:
+        code = r.status_code
+        try:
+            detail = r.json().get("detail", r.text[:200] if r.text else "Request failed")
+        except Exception:
+            detail = (r.text[:200] if r.text else "Request failed")
+        if code == 401:
+            return "Unauthorized (401). Check WA_QR_BRIDGE_TOKEN or API_KEY."
+        if code == 403:
+            return "Forbidden (403). Invalid or missing token or API key."
+        if code == 404:
+            return "Endpoint not found (404)."
+        if code == 429:
+            return "Rate limit exceeded (429). Try again in 30 seconds."
+        return f"Request failed ({code}): {str(detail)[:200]}"
 
     max_retries = 2
     for attempt in range(max_retries + 1):
@@ -397,52 +466,54 @@ def _wa_request(
             else:
                 r = requests.post(url, headers=headers, json=json_body or {}, timeout=timeout)
 
+            _last_http_status = r.status_code
+            _last_response_preview = _sanitize_preview(r.text[:200] if r.text else "")
+
             if r.status_code in (429, 502, 503, 504) and attempt < max_retries:
-                delay = 2 ** attempt
-                time.sleep(delay)
+                time.sleep(2 ** attempt)
                 continue
 
-            r.raise_for_status()
-            data = r.json() if r.content else ({} if method == "POST" else None)
+            if r.ok:
+                _last_wa_error = None
+                data = r.json() if r.content else ({} if method == "POST" else None)
+                if method == "GET" and throttle_seconds > 0:
+                    _wa_cache[cache_key] = (now, (data, None))
+                return data, None
 
-            _last_http_status = r.status_code
-            if method == "GET" and throttle_seconds > 0:
-                _wa_cache[cache_key] = (now, (data, None))
-            return data, None
+            err_msg = _err_from_response(r)
+            _last_wa_error = err_msg
+            return None, err_msg
 
         except requests.exceptions.HTTPError as e:
             _last_http_status = e.response.status_code if e.response else None
+            if e.response is not None:
+                _last_response_preview = _sanitize_preview(e.response.text[:200] if e.response.text else "")
             code = e.response.status_code if e.response else 0
             if code in (429, 502, 503, 504) and attempt < max_retries:
-                delay = 2 ** attempt
-                time.sleep(delay)
+                time.sleep(2 ** attempt)
                 continue
-            try:
-                detail = e.response.json().get("detail", "Request failed")
-            except Exception:
-                detail = "Request failed"
-            if code == 401:
-                return None, "Unauthorized (check WA_QR_BRIDGE_TOKEN in Streamlit secrets or paste below)."
-            if code == 403:
-                return None, "Forbidden (invalid or missing WA_QR_BRIDGE_TOKEN)."
-            if code == 404:
-                return None, "Endpoint not found."
-            if code == 429:
-                return None, "Rate limit exceeded. Try again in 30 seconds."
-            return None, f"Request failed ({code}): {str(detail)[:180]}"
+            if e.response is not None:
+                _last_wa_error = _err_from_response(e.response)
+                return None, _last_wa_error
+            _last_wa_error = f"Request failed ({code})."
+            return None, _last_wa_error
 
         except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout):
             _last_http_status = None
-            return None, _conn_err("Connection error: timed out.", url)
+            _last_wa_error = _conn_err("Connection error: timed out.", url)
+            return None, _last_wa_error
         except requests.exceptions.ConnectionError as e:
             _last_http_status = None
             reason = str(e).split("\n")[0][:80] if str(e) else "connection refused or unreachable"
-            return None, _conn_err(f"Connection error: {reason}.", url)
+            _last_wa_error = _conn_err(f"Connection error: {reason}.", url)
+            return None, _last_wa_error
         except Exception as e:
             _last_http_status = None
-            return None, _conn_err(f"Connection error: {str(e)[:80]}.", url)
+            _last_wa_error = _conn_err(f"Connection error: {str(e)[:80]}.", url)
+            return None, _last_wa_error
 
-    return None, "Request failed after retries."
+    _last_wa_error = "Request failed after retries."
+    return None, _last_wa_error
 
 
 def clear_wa_cache() -> None:
@@ -522,22 +593,15 @@ def get_posts(
     q: Optional[str] = None,
     tenant: Optional[str] = None,
 ) -> tuple[Optional[list], Optional[str]]:
-    """List posts: pending -> GET /review/pending; else GET /posts?limit=&offset=&source=&q=&status=."""
-    if status == "pending":
-        data, err = api_get("/review/pending", use_bearer=False)
-    else:
-        path = add_query("/posts", {
-            "limit": limit,
-            "offset": offset,
-            "source": source or "",
-            "q": q or "",
-            "status": status,
-        })
-        data, err = api_get(path, use_bearer=False)
+    """List posts: GET /posts?status=pending|published. Returns items with rendered_text, draft_payload."""
+    path = add_query("/posts", {
+        "limit": limit,
+        "offset": offset,
+        "status": status,
+    })
+    data, err = api_get(path, use_bearer=False)
     if err:
         return None, err
-    if isinstance(data, list):
-        return data, None
     if isinstance(data, dict) and "items" in data:
         return data["items"], None
     return data or [], None
